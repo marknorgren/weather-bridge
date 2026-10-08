@@ -1,0 +1,15 @@
+# Copy to deployment.auto.tfvars (gitignored) or set TF_VAR_* environment variables.
+profile       = "your-profile"
+region        = "us-east-1"
+nws_contact   = "https://example.com/weather"
+public_origin = "" # CloudFront origin from the endpoint output, after the first apply.
+origin_host   = "" # Function URL host from the function_url output, after the first apply.
+# Generate once, for example: python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+origin_verify_secret    = "replace-with-a-generated-value-of-32-or-more-characters"
+reserved_concurrency    = 3
+cloudfront_pricing_plan = "PAY_AS_YOU_GO"
+
+# Optional custom subdomain. ACM is requested in us-east-1; publish the output
+# certificate_dns_validation_records and wait for ISSUED before full deployment.
+# Point this hostname's CNAME at distribution_endpoint. Existing DNS is not managed.
+custom_domain = "" # Example: "api.example.com"

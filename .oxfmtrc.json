@@ -1,0 +1,8 @@
+{
+    "$schema": "./node_modules/oxfmt/configuration_schema.json",
+    "singleQuote": true,
+    "tabWidth": 4,
+    "printWidth": 100,
+    "ignorePatterns": ["frontend/schema.d.ts", "web/weather.js", "web/vendor/**"],
+    "useTabs": false
+}

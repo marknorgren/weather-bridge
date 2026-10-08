@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>REST reference · Weather Bridge</title><link rel="stylesheet" href="styles.css"></head><body><a class="skip" href="#app">Skip to API reference</a><header><a class="brand" href="index.html">weather bridge <span>/ docs</span></a><nav aria-label="Documentation"><a href="index.html">Start here</a><a href="rest.html" aria-current="page">REST reference</a><a href="mcp.html">MCP guide</a><a href="architecture/">Architecture</a><a href="@@API@@/developer#mcp">MCP tool explorer ↗</a></nav></header><aside class="reference-banner"><p>Send requests from this page to the live API, or copy the examples. <a href="openapi.json">Download OpenAPI JSON</a>.</p></aside><main id="app"></main><div id="load-status" role="status">Loading the REST reference…</div><script src="scalar-1.72.1.js"></script><script>
+try {
+  Scalar.createApiReference('#app', {
+    url: 'openapi.json', theme: 'none', withDefaultFonts: false,
+    darkMode: true, forceDarkModeState: 'dark', hideDarkModeToggle: true,
+    mcp: {name: 'Weather Bridge', url: '@@API@@/mcp'},
+    agent: {disabled: true}, telemetry: false, persistAuth: false,
+    showDeveloperTools: 'never', hideClientButton: true,
+    servers: [{url: '@@API@@', description: 'Public Weather Bridge demo (AWS)'}],
+    customCss: ':root { --scalar-font: "Avenir Next", "Trebuchet MS", sans-serif; --scalar-color-accent: #79cbea; } .dark-mode { --scalar-background-1: #102330; --scalar-background-2: #132b3b; --scalar-background-3: #193546; --scalar-color-1: #e6f0f5; --scalar-color-2: #9fb5c3; --scalar-color-3: #9fb5c3; --scalar-border-color: #2b4353; --scalar-color-accent: #79cbea; }',
+  });
+  document.getElementById('load-status').hidden = true;
+} catch (_) {
+  document.getElementById('load-status').textContent = 'The reference could not load. Reload or download openapi.json.';
+}
+</script></body></html>

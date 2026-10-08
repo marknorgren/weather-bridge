@@ -1,0 +1,182 @@
+[
+  {
+    "name": "empty",
+    "query": "",
+    "valid": false
+  },
+  {
+    "name": "one character",
+    "query": "a",
+    "valid": false
+  },
+  {
+    "name": "minimum",
+    "query": "aa",
+    "valid": true
+  },
+  {
+    "name": "maximum",
+    "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "name": "too long",
+    "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "name": "padded minimum",
+    "query": " aa ",
+    "valid": true
+  },
+  {
+    "name": "padded maximum",
+    "query": " aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+    "valid": true
+  },
+  {
+    "name": "padded short",
+    "query": " a ",
+    "valid": false
+  },
+  {
+    "name": "only spaces",
+    "query": "                                                                                                                         ",
+    "valid": false
+  },
+  {
+    "name": "internal spaces",
+    "query": "a b",
+    "valid": true
+  },
+  {
+    "name": "internal newline",
+    "query": "a\nb",
+    "valid": true
+  },
+  {
+    "name": "astral short",
+    "query": "🌤",
+    "valid": false
+  },
+  {
+    "name": "padded astral short",
+    "query": " 🌤 ",
+    "valid": false
+  },
+  {
+    "name": "mixed scalar minimum",
+    "query": "a🌤",
+    "valid": true
+  },
+  {
+    "name": "astral minimum",
+    "query": "🌤🌤",
+    "valid": true
+  },
+  {
+    "name": "astral maximum",
+    "query": "🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤",
+    "valid": true
+  },
+  {
+    "name": "astral too long",
+    "query": "🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤🌤",
+    "valid": false
+  },
+  {
+    "name": "combining characters",
+    "query": "á",
+    "valid": true
+  },
+  {
+    "name": "BOM is not trimmed",
+    "query": "﻿a",
+    "valid": true
+  },
+  {
+    "name": "zero width space is not trimmed",
+    "query": "​a",
+    "valid": true
+  },
+  {
+    "name": "ASCII whitespace short",
+    "query": "\t\n\u000b\f\r a\t\n\u000b\f\r ",
+    "valid": false
+  },
+  {
+    "name": "ASCII whitespace minimum",
+    "query": "\t\n\u000b\f\r aa\t\n\u000b\f\r ",
+    "valid": true
+  },
+  {
+    "name": "ASCII whitespace maximum",
+    "query": "\t\n\u000b\f\r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t\n\u000b\f\r ",
+    "valid": true
+  },
+  {
+    "name": "ASCII whitespace too long",
+    "query": "\t\n\u000b\f\r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t\n\u000b\f\r ",
+    "valid": false
+  },
+  {
+    "name": "next line short",
+    "query": "a",
+    "valid": false
+  },
+  {
+    "name": "next line minimum",
+    "query": "aa",
+    "valid": true
+  },
+  {
+    "name": "next line maximum",
+    "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "name": "next line too long",
+    "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "name": "nonbreaking space short",
+    "query": " a ",
+    "valid": false
+  },
+  {
+    "name": "nonbreaking space minimum",
+    "query": " aa ",
+    "valid": true
+  },
+  {
+    "name": "nonbreaking space maximum",
+    "query": " aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+    "valid": true
+  },
+  {
+    "name": "nonbreaking space too long",
+    "query": " aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+    "valid": false
+  },
+  {
+    "name": "Unicode spaces short",
+    "query": "                　a                　",
+    "valid": false
+  },
+  {
+    "name": "Unicode spaces minimum",
+    "query": "                　aa                　",
+    "valid": true
+  },
+  {
+    "name": "Unicode spaces maximum",
+    "query": "                　aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                　",
+    "valid": true
+  },
+  {
+    "name": "Unicode spaces too long",
+    "query": "                　aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                　",
+    "valid": false
+  }
+]

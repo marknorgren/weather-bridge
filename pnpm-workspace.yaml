@@ -1,0 +1,5 @@
+# pnpm 11 stops an install when a dependency build script is not approved or denied.
+# esbuild's postinstall only validates and caches its platform binary, which pnpm
+# already installs as an optional dependency, so the script is not needed.
+allowBuilds:
+  esbuild: false

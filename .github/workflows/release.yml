@@ -1,0 +1,207 @@
+name: Release AWS demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful prior release workflow run ID to redeploy (leave blank to build this revision)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weather-demo-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: inputs.release_run_id == ''
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+      revision: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup toolchain install 1.88.0 --profile minimal --no-self-update
+          rustc --version
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Installs the pnpm version pinned by packageManager in package.json.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install release and check tools
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just@1.58.0,cargo-deny@0.20.2,cargo-lambda@1.9.2
+      - name: Install Zig
+        run: |
+          python3 -m venv "$RUNNER_TEMP/weather-bridge-zig"
+          "$RUNNER_TEMP/weather-bridge-zig/bin/pip" install ziglang==0.15.2
+          "$RUNNER_TEMP/weather-bridge-zig/bin/python" -c 'import pathlib, sys, ziglang; pathlib.Path(sys.argv[1]).symlink_to(pathlib.Path(ziglang.__file__).parent / "zig")' "$RUNNER_TEMP/weather-bridge-zig/bin/zig"
+          "$RUNNER_TEMP/weather-bridge-zig/bin/zig" version
+          echo "$RUNNER_TEMP/weather-bridge-zig/bin" >> "$GITHUB_PATH"
+      - name: Verify the exact source revision
+        run: |
+          just check
+          just check-msrv
+          just audit
+      - name: Build the ARM64 release once
+        env:
+          WEATHER_BRIDGE_BUILD_REVISION: ${{ github.sha }}
+        run: |
+          cargo lambda build --release --arm64 --output-format zip --locked
+          python3 scripts/release.py package \
+            --compiled-zip target/lambda/weather-bridge/bootstrap.zip \
+            --output target/release-artifact \
+            --revision "$WEATHER_BRIDGE_BUILD_REVISION"
+      - name: Upload immutable release artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: weather-bridge-release-${{ github.sha }}
+          path: target/release-artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  resolve:
+    if: >-
+      always() &&
+      ((inputs.release_run_id == '' && needs.build.result == 'success') ||
+       (inputs.release_run_id != '' && needs.build.result == 'skipped'))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.current.outputs.artifact_id || steps.rollback.outputs.artifact_id }}
+      artifact-digest: ${{ steps.current.outputs.artifact_digest || steps.rollback.outputs.artifact_digest }}
+      revision: ${{ steps.current.outputs.revision || steps.rollback.outputs.revision }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Select artifact from this run
+        id: current
+        if: inputs.release_run_id == ''
+        env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+          REVISION: ${{ needs.build.outputs.revision }}
+        run: |
+          printf 'artifact_id=%s\nartifact_digest=%s\nrevision=%s\n' \
+            "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$REVISION" >> "$GITHUB_OUTPUT"
+      - name: Verify and select prior successful release
+        id: rollback
+        if: inputs.release_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          case "$RELEASE_RUN_ID" in
+            ''|*[!0-9]*) echo 'release_run_id must contain only decimal digits' >&2; exit 2 ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID" > "$RUNNER_TEMP/release-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/release-artifacts.json"
+          python3 scripts/release.py select-artifact \
+            --run "$RUNNER_TEMP/release-run.json" \
+            --artifacts "$RUNNER_TEMP/release-artifacts.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$RELEASE_RUN_ID" \
+            --github-output "$GITHUB_OUTPUT"
+
+  deploy:
+    if: >-
+      always() &&
+      needs.resolve.result == 'success' &&
+      github.repository == 'marknorgren/weather-bridge' &&
+      github.ref == 'refs/heads/main' &&
+      vars.AWS_DEPLOY_ENABLED == 'true'
+    needs: [build, resolve]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    environment: weather-demo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Require environment deployment configuration
+        env:
+          ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          DEPLOY_REGION: ${{ vars.AWS_REGION }}
+          NWS_CONTACT: ${{ vars.NWS_CONTACT }}
+        run: |
+          for name in ROLE_ARN ACCOUNT_ID DEPLOY_REGION NWS_CONTACT; do
+            if [ -z "${!name}" ]; then
+              echo "Missing weather-demo environment variable: $name" >&2
+              exit 2
+            fi
+          done
+      - name: Download artifact archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.resolve.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.resolve.outputs.artifact-digest }}
+          REVISION: ${{ needs.resolve.outputs.revision }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/release.zip"
+          python3 scripts/release.py extract-artifact \
+            --archive "$RUNNER_TEMP/release.zip" \
+            --digest "$ARTIFACT_DIGEST" \
+            --output "$RUNNER_TEMP/weather-bridge-release"
+          python3 scripts/release.py verify \
+            --release "$RUNNER_TEMP/weather-bridge-release" \
+            --revision "$REVISION"
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: '1.15.8'
+          terraform_wrapper: false
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: weather-bridge-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Deploy the verified release
+        env:
+          # The guard has one execution slot, also used by its scheduled checks.
+          AWS_RETRY_MODE: standard
+          AWS_MAX_ATTEMPTS: '10'
+          RELEASE_DIRECTORY: ${{ runner.temp }}/weather-bridge-release
+          RELEASE_REVISION: ${{ needs.resolve.outputs.revision }}
+          DEPLOY_REGION: ${{ vars.AWS_REGION }}
+          NWS_CONTACT: ${{ vars.NWS_CONTACT }}
+          RESERVED_CONCURRENCY: ${{ vars.RESERVED_CONCURRENCY }}
+          CLOUDFRONT_PLAN: ${{ vars.CLOUDFRONT_PLAN }}
+          CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+        run: |
+          deploy=(python3 infra/aws/deploy.py
+            --region "$DEPLOY_REGION"
+            --contact "$NWS_CONTACT"
+            --release "$RELEASE_DIRECTORY"
+            --revision "$RELEASE_REVISION")
+          if [ -n "$RESERVED_CONCURRENCY" ]; then deploy+=(--concurrency "$RESERVED_CONCURRENCY"); fi
+          if [ -n "$CLOUDFRONT_PLAN" ]; then deploy+=(--cloudfront-plan "$CLOUDFRONT_PLAN"); fi
+          if [ -n "$CUSTOM_DOMAIN" ]; then deploy+=(--domain "$CUSTOM_DOMAIN"); fi
+          "${deploy[@]}"

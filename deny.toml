@@ -1,0 +1,37 @@
+# cargo-deny policy (https://embarkstudios.github.io/cargo-deny/).
+# Run with `just audit` or `cargo deny check`. Covers Rust crates only;
+# data/cities.json is GeoNames CC BY 4.0 data, not a crate dependency.
+
+[graph]
+all-features = true
+
+[advisories]
+# Unmaintained/unsound/vulnerable RustSec advisories fail the check.
+# Add an ignore only with a reason explaining why it does not apply.
+ignore = []
+
+[licenses]
+# Allowlist derived from `cargo metadata` for the locked dependency tree.
+# Each entry is required by at least one crate (see comments).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",                 # ring, rustls-webpki, untrusted
+    "BSD-3-Clause",        # subtle, matchit
+    "Unicode-3.0",         # icu_*, zerovec, unicode-ident, ...
+    "CDLA-Permissive-2.0", # webpki-roots (Mozilla CA bundle)
+]
+confidence-threshold = 0.9
+unused-allowed-license = "warn"
+
+[bans]
+# Duplicate versions are common in the tokio/windows ecosystem; report, don't fail.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

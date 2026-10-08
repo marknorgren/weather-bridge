@@ -1,0 +1,1009 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Weather Bridge Lambda demo behind CloudFront, with account usage guard and demo-only shutdown",
+  "Parameters": {
+    "ArtifactBucket": {
+      "Type": "String"
+    },
+    "AppKey": {
+      "Type": "String"
+    },
+    "GuardKey": {
+      "Type": "String"
+    },
+    "NwsUserAgent": {
+      "Type": "String"
+    },
+    "PublicHost": {
+      "Type": "String",
+      "Default": "127.0.0.1",
+      "Description": "Comma-separated Host values the MCP endpoint accepts: the CloudFront domain, the Function URL host that Lambda sees behind CloudFront, and loopback."
+    },
+    "PublicOrigin": {
+      "Type": "String",
+      "Default": "http://127.0.0.1:8080",
+      "Description": "Browser Origin the MCP endpoint accepts: the CloudFront HTTPS origin."
+    },
+    "ReservedConcurrency": {
+      "Type": "Number",
+      "Default": 3,
+      "MinValue": 1,
+      "MaxValue": 10,
+      "Description": "Reserved concurrency the usage guard restores on resume. The stack itself always starts the demo at 0. The account must keep at least 100 unreserved concurrency after this reservation."
+    },
+    "OriginVerifySecret": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 32,
+      "MaxLength": 128,
+      "AllowedPattern": "^[A-Za-z0-9_-]+$",
+      "Description": "Shared value CloudFront adds as X-Weather-Bridge-Origin-Verify. The app rejects other direct Function URL requests. Not a credential: it is visible to anyone who can read the Lambda or CloudFront configuration."
+    },
+    "CloudFrontPricingPlan": {
+      "Type": "String",
+      "Default": "PAY_AS_YOU_GO",
+      "AllowedValues": [
+        "PAY_AS_YOU_GO",
+        "FREE"
+      ],
+      "Description": "PAY_AS_YOU_GO uses the CloudFront always-free tier, guarded by the usage guard. FREE subscribes the distribution to the $0 flat-rate plan with an IP rate limit (us-east-1 only; ineligible on Free account plans). See infra/aws/README.md."
+    },
+    "CustomDomain": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional custom DNS hostname for CloudFront. DNS is operator-managed; use an ISSUED ACM certificate in us-east-1."
+    },
+    "CertificateArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "ISSUED us-east-1 ACM certificate ARN for CustomDomain. Leave empty when no custom domain is configured."
+    }
+  },
+  "Resources": {
+    "AppLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/weather-bridge-demo",
+        "RetentionInDays": 7
+      }
+    },
+    "AppInitStartFilter": {
+      "Type": "AWS::Logs::MetricFilter",
+      "Properties": {
+        "FilterName": "weather-bridge-demo-init-starts",
+        "LogGroupName": {
+          "Ref": "AppLogs"
+        },
+        "FilterPattern": "?\"INIT_START\" ?\"platform.initStart\"",
+        "MetricTransformations": [
+          {
+            "MetricNamespace": "WeatherBridge",
+            "MetricName": "DemoInitStarts",
+            "MetricValue": "1",
+            "Unit": "Count"
+          }
+        ]
+      }
+    },
+    "GuardLogs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/aws/lambda/weather-bridge-usage-guard",
+        "RetentionInDays": 7
+      }
+    },
+    "AppRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "WeatherBridgeOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/weather-bridge-demo:*"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "weather-bridge"
+          }
+        ]
+      }
+    },
+    "GuardRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "WeatherBridgeOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/weather-bridge-usage-guard:*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:ListFunctions",
+                    "ec2:DescribeRegions",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudfront:ListDistributions"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:PutFunctionConcurrency",
+                    "lambda:GetFunctionConcurrency"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:weather-bridge-demo"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:DescribeMetricFilters"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/weather-bridge-demo"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/weather-bridge-demo:*"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudfront:GetDistributionConfig",
+                    "cloudfront:UpdateDistribution"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+                  }
+                },
+                {
+                  "Fn::If": [
+                    "UseFreePlan",
+                    {
+                      "Effect": "Allow",
+                      "Action": [
+                        "wafv2:GetWebACL"
+                      ],
+                      "Resource": {
+                        "Fn::GetAtt": [
+                          "WebAcl",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "weather-bridge"
+          }
+        ]
+      }
+    },
+    "AppFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "weather-bridge-demo",
+        "Runtime": "provided.al2023",
+        "Handler": "bootstrap",
+        "Architectures": [
+          "arm64"
+        ],
+        "Role": {
+          "Fn::GetAtt": [
+            "AppRole",
+            "Arn"
+          ]
+        },
+        "MemorySize": 256,
+        "Timeout": 60,
+        "ReservedConcurrentExecutions": 0,
+        "Code": {
+          "S3Bucket": {
+            "Ref": "ArtifactBucket"
+          },
+          "S3Key": {
+            "Ref": "AppKey"
+          }
+        },
+        "Layers": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:28"
+          }
+        ],
+        "Environment": {
+          "Variables": {
+            "WEATHER_BRIDGE_BIND": "0.0.0.0:8080",
+            "AWS_LWA_PORT": "8080",
+            "AWS_LWA_READINESS_CHECK_PATH": "/healthz",
+            "AWS_LWA_READINESS_CHECK_HEALTHY_STATUS": "200",
+            "AWS_LWA_INVOKE_MODE": "buffered",
+            "WEATHER_BRIDGE_USER_AGENT": {
+              "Ref": "NwsUserAgent"
+            },
+            "WEATHER_BRIDGE_MCP_HOSTS": {
+              "Ref": "PublicHost"
+            },
+            "WEATHER_BRIDGE_MCP_ORIGINS": {
+              "Ref": "PublicOrigin"
+            },
+            "RUST_LOG": "warn",
+            "WEATHER_BRIDGE_ORIGIN_VERIFY": {
+              "Ref": "OriginVerifySecret"
+            }
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "weather-bridge"
+          }
+        ]
+      },
+      "DependsOn": "AppLogs"
+    },
+    "AppUrl": {
+      "Type": "AWS::Lambda::Url",
+      "Properties": {
+        "TargetFunctionArn": {
+          "Fn::GetAtt": [
+            "AppFunction",
+            "Arn"
+          ]
+        },
+        "AuthType": "NONE",
+        "InvokeMode": "BUFFERED"
+      }
+    },
+    "AppUrlPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "AppFunction"
+        },
+        "Action": "lambda:InvokeFunctionUrl",
+        "Principal": "*",
+        "FunctionUrlAuthType": "NONE"
+      }
+    },
+    "AppInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "AppFunction"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "*",
+        "InvokedViaFunctionUrl": true
+      }
+    },
+    "GuardFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "weather-bridge-usage-guard",
+        "Runtime": "python3.13",
+        "Handler": "guard.handler",
+        "Architectures": [
+          "arm64"
+        ],
+        "Role": {
+          "Fn::GetAtt": [
+            "GuardRole",
+            "Arn"
+          ]
+        },
+        "MemorySize": 256,
+        "Timeout": 120,
+        "ReservedConcurrentExecutions": 1,
+        "Code": {
+          "S3Bucket": {
+            "Ref": "ArtifactBucket"
+          },
+          "S3Key": {
+            "Ref": "GuardKey"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "TARGET_FUNCTION": "weather-bridge-demo",
+            "TARGET_REGION": {
+              "Ref": "AWS::Region"
+            },
+            "REQUEST_LIMIT": "800000",
+            "COMPUTE_LIMIT_GB_SECONDS": "320000",
+            "RESUME_CONCURRENCY": {
+              "Ref": "ReservedConcurrency"
+            },
+            "INIT_FILTER_NAME": "weather-bridge-demo-init-starts",
+            "INIT_METRIC_NAMESPACE": "WeatherBridge",
+            "INIT_METRIC_NAME": "DemoInitStarts",
+            "DISTRIBUTION_ID": {
+              "Ref": "Distribution"
+            },
+            "CLOUDFRONT_REQUEST_LIMIT": "8000000",
+            "CLOUDFRONT_BYTES_LIMIT": "800000000000"
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "weather-bridge"
+          }
+        ]
+      },
+      "DependsOn": [
+        "GuardLogs",
+        "AppFunction",
+        "AppInitStartFilter"
+      ]
+    },
+    "GuardAsyncConfig": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "GuardFunction"
+        },
+        "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 1,
+        "MaximumEventAgeInSeconds": 300
+      }
+    },
+    "GuardSchedule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "ScheduleExpression": "rate(5 minutes)",
+        "State": "ENABLED",
+        "Targets": [
+          {
+            "Id": "UsageGuard",
+            "Arn": {
+              "Fn::GetAtt": [
+                "GuardFunction",
+                "Arn"
+              ]
+            },
+            "Input": "{\"action\":\"check\"}"
+          }
+        ]
+      }
+    },
+    "GuardSchedulePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "GuardFunction"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "events.amazonaws.com",
+        "SourceArn": {
+          "Fn::GetAtt": [
+            "GuardSchedule",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "GuardTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "weather-bridge-guard-events"
+      }
+    },
+    "GuardTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "GuardTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "budgets.amazonaws.com",
+                  "cloudwatch.amazonaws.com"
+                ]
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "GuardTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "GuardSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Properties": {
+        "Protocol": "lambda",
+        "Endpoint": {
+          "Fn::GetAtt": [
+            "GuardFunction",
+            "Arn"
+          ]
+        },
+        "TopicArn": {
+          "Ref": "GuardTopic"
+        }
+      }
+    },
+    "GuardTopicPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": {
+          "Ref": "GuardFunction"
+        },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "sns.amazonaws.com",
+        "SourceArn": {
+          "Ref": "GuardTopic"
+        }
+      }
+    },
+    "LambdaCostBackstop": {
+      "Type": "AWS::Budgets::Budget",
+      "Properties": {
+        "Budget": {
+          "BudgetName": "weather-bridge-lambda-backstop",
+          "BudgetType": "COST",
+          "TimeUnit": "MONTHLY",
+          "BudgetLimit": {
+            "Amount": 1,
+            "Unit": "USD"
+          },
+          "CostFilters": {
+            "Service": [
+              "AWS Lambda",
+              "Amazon CloudFront"
+            ]
+          },
+          "CostTypes": {
+            "IncludeCredit": false,
+            "IncludeRefund": false
+          }
+        },
+        "NotificationsWithSubscribers": [
+          {
+            "Notification": {
+              "NotificationType": "ACTUAL",
+              "ComparisonOperator": "GREATER_THAN",
+              "Threshold": 1,
+              "ThresholdType": "PERCENTAGE"
+            },
+            "Subscribers": [
+              {
+                "SubscriptionType": "SNS",
+                "Address": {
+                  "Ref": "GuardTopic"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "DependsOn": "GuardTopicPolicy"
+    },
+    "GuardErrorAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Stop only Weather Bridge on guard/control failure",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "weather-bridge-usage-guard"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "GuardTopic"
+          }
+        ]
+      }
+    },
+    "ScheduleFailureAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Stop only Weather Bridge on guard/control failure",
+        "Namespace": "AWS/Events",
+        "MetricName": "FailedInvocations",
+        "Dimensions": [
+          {
+            "Name": "RuleName",
+            "Value": {
+              "Ref": "GuardSchedule"
+            }
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "GuardTopic"
+          }
+        ]
+      }
+    },
+    "AppLogErrorsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Weather Bridge application Lambda errors",
+        "Namespace": "AWS/Lambda",
+        "MetricName": "Errors",
+        "Dimensions": [
+          {
+            "Name": "FunctionName",
+            "Value": "weather-bridge-demo"
+          }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 5,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching"
+      }
+    },
+    "ApiCachePolicy": {
+      "Type": "AWS::CloudFront::CachePolicy",
+      "Condition": "UsePayAsYouGo",
+      "Properties": {
+        "CachePolicyConfig": {
+          "Name": {
+            "Fn::Sub": "${AWS::StackName}-api"
+          },
+          "Comment": "Weather Bridge /v1: cache only when the app sends Cache-Control max-age, never longer than 120 s, keyed on the full query string",
+          "MinTTL": 0,
+          "DefaultTTL": 0,
+          "MaxTTL": 120,
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "EnableAcceptEncodingGzip": true,
+            "EnableAcceptEncodingBrotli": true,
+            "HeadersConfig": {
+              "HeaderBehavior": "none"
+            },
+            "CookiesConfig": {
+              "CookieBehavior": "none"
+            },
+            "QueryStringsConfig": {
+              "QueryStringBehavior": "all"
+            }
+          }
+        }
+      }
+    },
+    "WebAcl": {
+      "Type": "AWS::WAFv2::WebACL",
+      "Condition": "UseFreePlan",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-plan"
+        },
+        "Scope": "CLOUDFRONT",
+        "Description": "Required by the CloudFront flat-rate Free plan, which covers its cost while subscribed",
+        "DefaultAction": {
+          "Allow": {}
+        },
+        "Rules": [
+          {
+            "Name": "RateLimitPerIp",
+            "Priority": 0,
+            "Action": {
+              "Block": {}
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": 300,
+                "EvaluationWindowSec": 300,
+                "AggregateKeyType": "IP"
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": false,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "RateLimitPerIp"
+            }
+          }
+        ],
+        "VisibilityConfig": {
+          "SampledRequestsEnabled": false,
+          "CloudWatchMetricsEnabled": true,
+          "MetricName": "WeatherBridgePlan"
+        }
+      }
+    },
+    "Distribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Comment": "Weather Bridge public demo",
+          "Enabled": true,
+          "HttpVersion": "http2and3",
+          "IPV6Enabled": true,
+          "PriceClass": {
+            "Fn::If": [
+              "UseFreePlan",
+              "PriceClass_All",
+              "PriceClass_100"
+            ]
+          },
+          "WebACLId": {
+            "Fn::If": [
+              "UseFreePlan",
+              {
+                "Fn::GetAtt": [
+                  "WebAcl",
+                  "Arn"
+                ]
+              },
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
+          },
+          "ViewerCertificate": {
+            "Fn::If": [
+              "UseCustomDomain",
+              {
+                "AcmCertificateArn": {
+                  "Ref": "CertificateArn"
+                },
+                "SslSupportMethod": "sni-only",
+                "MinimumProtocolVersion": "TLSv1.2_2021"
+              },
+              {
+                "CloudFrontDefaultCertificate": true
+              }
+            ]
+          },
+          "Origins": [
+            {
+              "Id": "function-url",
+              "DomainName": {
+                "Fn::Select": [
+                  2,
+                  {
+                    "Fn::Split": [
+                      "/",
+                      {
+                        "Fn::GetAtt": [
+                          "AppUrl",
+                          "FunctionUrl"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              "CustomOriginConfig": {
+                "HTTPSPort": 443,
+                "OriginProtocolPolicy": "https-only",
+                "OriginSSLProtocols": [
+                  "TLSv1.2"
+                ],
+                "OriginReadTimeout": {
+                  "Fn::If": [
+                    "UseFreePlan",
+                    30,
+                    60
+                  ]
+                },
+                "OriginKeepaliveTimeout": 5
+              },
+              "OriginCustomHeaders": [
+                {
+                  "HeaderName": "X-Weather-Bridge-Origin-Verify",
+                  "HeaderValue": {
+                    "Ref": "OriginVerifySecret"
+                  }
+                }
+              ]
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "function-url",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+            "Compress": true
+          },
+          "CacheBehaviors": [
+            {
+              "PathPattern": "/mcp*",
+              "TargetOriginId": "function-url",
+              "ViewerProtocolPolicy": "https-only",
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS",
+                "PUT",
+                "PATCH",
+                "POST",
+                "DELETE"
+              ],
+              "CachedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+              "Compress": false
+            },
+            {
+              "PathPattern": "/v1/*",
+              "TargetOriginId": "function-url",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": [
+                "GET",
+                "HEAD",
+                "OPTIONS"
+              ],
+              "CachedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachePolicyId": {
+                "Fn::If": [
+                  "UseFreePlan",
+                  "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                  {
+                    "Ref": "ApiCachePolicy"
+                  }
+                ]
+              },
+              "OriginRequestPolicyId": {
+                "Fn::If": [
+                  "UseFreePlan",
+                  "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+                  {
+                    "Ref": "AWS::NoValue"
+                  }
+                ]
+              },
+              "Compress": true
+            },
+            {
+              "PathPattern": "/???????",
+              "TargetOriginId": "function-url",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "Compress": false
+            }
+          ],
+          "CustomErrorResponses": {
+            "Fn::If": [
+              "UseFreePlan",
+              {
+                "Ref": "AWS::NoValue"
+              },
+              [
+                {
+                  "ErrorCode": 503,
+                  "ErrorCachingMinTTL": 0
+                },
+                {
+                  "ErrorCode": 504,
+                  "ErrorCachingMinTTL": 0
+                }
+              ]
+            ]
+          },
+          "Aliases": {
+            "Fn::If": [
+              "UseCustomDomain",
+              [
+                {
+                  "Ref": "CustomDomain"
+                }
+              ],
+              {
+                "Ref": "AWS::NoValue"
+              }
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "weather-bridge"
+          }
+        ]
+      }
+    },
+    "PlanSubscription": {
+      "Type": "AWS::PricingPlanManager::Subscription",
+      "Condition": "UseFreePlan",
+      "Properties": {
+        "PlanFamily": "CloudFront",
+        "PlanTier": "FREE",
+        "UsageLevel": "DEFAULT",
+        "ResourceArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+          },
+          {
+            "Fn::GetAtt": [
+              "WebAcl",
+              "Arn"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "Endpoint": {
+      "Description": "Preferred public HTTPS endpoint: custom domain when configured, otherwise CloudFront",
+      "Value": {
+        "Fn::If": [
+          "UseCustomDomain",
+          {
+            "Fn::Sub": "https://${CustomDomain}/"
+          },
+          {
+            "Fn::Sub": "https://${Distribution.DomainName}/"
+          }
+        ]
+      }
+    },
+    "FunctionUrl": {
+      "Description": "Lambda Function URL origin. Direct requests are rejected once the app verifies the origin header.",
+      "Value": {
+        "Fn::GetAtt": [
+          "AppUrl",
+          "FunctionUrl"
+        ]
+      }
+    },
+    "DistributionId": {
+      "Value": {
+        "Ref": "Distribution"
+      }
+    },
+    "GuardFunction": {
+      "Value": {
+        "Ref": "GuardFunction"
+      }
+    },
+    "DemoFunction": {
+      "Value": {
+        "Ref": "AppFunction"
+      }
+    },
+    "DistributionEndpoint": {
+      "Description": "Generated CloudFront HTTPS endpoint, used as the custom domain DNS target",
+      "Value": {
+        "Fn::Sub": "https://${Distribution.DomainName}/"
+      }
+    }
+  },
+  "Conditions": {
+    "UseFreePlan": {
+      "Fn::Equals": [
+        {
+          "Ref": "CloudFrontPricingPlan"
+        },
+        "FREE"
+      ]
+    },
+    "UsePayAsYouGo": {
+      "Fn::Not": [
+        {
+          "Condition": "UseFreePlan"
+        }
+      ]
+    },
+    "UseCustomDomain": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "CustomDomain"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  }
+}

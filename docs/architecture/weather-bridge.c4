@@ -1,0 +1,288 @@
+// Canonical Weather Bridge architecture model. Preview with: likec4 start docs/architecture
+// Source ownership and maintenance notes: docs/architecture/README.md.
+
+specification {
+  element actor {
+    style {
+      shape person
+    }
+  }
+  element system
+  element external {
+    style {
+      color muted
+    }
+  }
+  element container
+  element component
+  element datastore {
+    style {
+      shape storage
+    }
+  }
+  element cloud {
+    style {
+      color slate
+    }
+  }
+
+  relationship calls
+  relationship reads {
+    line dotted
+  }
+}
+
+model {
+  person = actor 'Person' {
+    description 'Uses the weather page in a browser, or the CLI'
+  }
+  agent = actor 'AI agent' {
+    description 'MCP client over stdio or Streamable HTTP'
+  }
+
+  nws = external 'NWS API' {
+    description 'api.weather.gov: /points, forecasts, stations, observations, active alerts'
+    technology 'HTTPS, GeoJSON'
+  }
+  pages = external 'GitHub Pages docs' {
+    description 'Getting started, Scalar REST reference, MCP guide'
+    technology 'Static site from docs/site'
+  }
+
+  weatherBridge = system 'Weather Bridge' {
+    description 'US weather by city or coordinates. One Rust binary; every interface calls the same Weather service.'
+
+    web = container 'Web pages' {
+      description '/ (weather page) and /developer (REST links, MCP tool explorer). Same-origin scripts only.'
+      technology 'web/*.html, web/*.js, embedded'
+    }
+
+    httpApi = container 'HTTP server' {
+      description 'weather-bridge serve: pages, REST /v1/*, OpenAPI, diagnostics, and MCP at /mcp'
+      technology 'Axum, src/api/'
+
+      middleware = component 'Middleware stack' {
+        description 'Request ID and observation, baseline headers, compression, REST error mapper, 50 s timeout, origin check, CORS, 16 KiB limit, REST body consumption'
+        technology 'src/api/mod.rs, error.rs, security.rs, cors.rs'
+      }
+      routes = component 'Routes' {
+        description 'Pages, /v1/cities, /v1/weather, /v1/forecast/hourly, /v1/alerts'
+        technology 'src/api/routes.rs'
+      }
+      diagnostics = component 'Diagnostics' {
+        description '/healthz liveness, /version build identity, /metrics bounded Prometheus metrics with fixed labels'
+        technology 'src/diagnostics.rs, src/api/routes.rs'
+      }
+      cachePolicy = component 'Cache-Control policy' {
+        description 'public max-age up to 120 s for complete reports; no-store for partial ones'
+        technology 'src/api/cache.rs'
+      }
+      mcpHttp = component 'MCP Streamable HTTP' {
+        description 'Stateless, JSON responses, Host and Origin allowlists'
+        technology 'rmcp, src/api/mcp_http.rs'
+      }
+    }
+
+    mcpServer = container 'MCP tools' {
+      description 'Adapter beside REST and the CLI. search_cities, get_weather, get_hourly_forecast, get_active_alerts. Read-only, with output schemas. Reached over stdio or via /mcp on the HTTP server.'
+      technology 'rmcp, src/mcp.rs'
+    }
+
+    cli = container 'CLI' {
+      description 'weather, hourly, alerts, cities. Exit 3 when output is incomplete.'
+      technology 'Clap, src/cli/'
+    }
+
+    service = container 'Weather service' {
+      description 'Resolves locations and assembles reports, hourly forecasts and alerts'
+      technology 'src/weather.rs'
+
+      admission = component 'Admission and deadline' {
+        description 'Resolves the location before taking a slot, so invalid or ambiguous queries never use one. 8 lookups in flight (else BUSY), upstream starts within 6 s of the lookup start (else BUSY), 12 s observation search (else a NoObservation warning), 45 s per lookup (else UPSTREAM_TIMEOUT)'
+        technology 'Tokio semaphore'
+      }
+      query = component 'Location resolution' {
+        description 'Exactly one of city, cityId, or lat+lon. Never guesses between same-name cities.'
+        technology 'src/weather/query.rs'
+      }
+      nwsClient = component 'NWS client' {
+        description 'Fixed origin, 12 s timeout, 2 MB cap, no redirects, failure logging'
+        technology 'Reqwest/rustls, src/weather/nws.rs'
+      }
+      limiter = component 'Upstream limiter' {
+        description 'Burst of 6 request starts, then 1 per second per process'
+        technology 'GCRA, src/weather/nws/limiter.rs'
+      }
+      docCache = datastore 'Document cache' {
+        description 'Forecasts, observations, alerts: 120 s. Merges duplicate in-flight fetches.'
+        technology 'Moka'
+      }
+      pointsCache = datastore 'Grid lookup cache' {
+        description '/points results: 6 h'
+        technology 'Moka'
+      }
+      normalize = component 'Normalize' {
+        description 'NWS documents to response types; units, wind text, distance'
+        technology 'src/weather/normalize.rs, convert.rs'
+      }
+    }
+
+    cities = datastore 'City index' {
+      description 'GeoNames US places, embedded at build. CC BY 4.0.'
+      technology 'data/cities.json, rstar, src/cities.rs'
+    }
+  }
+
+  // Interfaces to the service
+  person -> web 'Searches and reads weather'
+  person -> cli 'Runs commands'
+  person -> pages 'Reads API docs'
+  agent -> mcpServer 'Calls tools over stdio'
+  agent -> mcpHttp 'Calls tools over HTTP'
+  web -> routes 'fetch /v1/*'
+  pages -> routes 'CORS GET /v1/*'
+
+  middleware -> routes 'Passes allowed requests'
+  middleware -> mcpHttp 'Passes allowed requests'
+  routes -> diagnostics 'Serves operator endpoints'
+  routes -> cachePolicy 'Sets Cache-Control'
+  mcpHttp -> mcpServer '/mcp requests, one WeatherMcp each'
+  routes -> admission 'REST: report, hourly, alerts'
+  routes -> cities 'City search'
+  mcpServer -> admission 'MCP: report, hourly, alerts'
+  cli -> admission 'CLI: report, hourly, alerts'
+
+  admission -> query 'Resolve location before taking a slot'
+  query -[reads]-> cities 'Exact match, ID, or nearest city'
+  admission -> nwsClient 'Fetch sources'
+  nwsClient -[reads]-> docCache 'Cached documents'
+  nwsClient -[reads]-> pointsCache 'Cached grid lookups'
+  nwsClient -> limiter 'Wait for a start slot'
+  nwsClient -[calls]-> nws 'GET, Accept: application/geo+json'
+  admission -> normalize 'Build response'
+
+  // AWS deployment (infra/aws). Modelled as elements so the deployment view can show the guard.
+  aws = cloud 'AWS account' {
+    description 'Demo hosting; see infra/aws/README.md and ADR-0002'
+
+    cloudfront = container 'CloudFront' {
+      description 'Public endpoint. Adds X-Weather-Bridge-Origin-Verify. Never caches MCP or diagnostic endpoints.'
+    }
+    lambda = container 'Lambda: weather-bridge' {
+      description 'ARM64, Lambda Web Adapter runs weather-bridge serve. Reserved concurrency defaults to 3.'
+    }
+    eventbridge = container 'EventBridge schedule' {
+      description 'Every five minutes'
+    }
+    guard = container 'Usage guard' {
+      description 'Stops the demo at 80% of Lambda or CloudFront free allowances'
+      technology 'Python 3.13 Lambda'
+    }
+    metrics = datastore 'CloudWatch' {
+      description 'Lambda and CloudFront usage metrics and logs'
+    }
+    sns = container 'SNS shutdown topic' {
+      description 'Monitor errors and alarms signal a shutdown'
+    }
+  }
+
+  person -> cloudfront 'HTTPS'
+  agent -> cloudfront 'HTTPS /mcp'
+  pages -> cloudfront 'REST reference calls'
+  cloudfront -> lambda 'Function URL, origin-verify header'
+  lambda -> httpApi 'Runs'
+  eventbridge -> guard 'Invokes'
+  sns -> guard 'Shutdown signal'
+  guard -[reads]-> metrics 'Monthly usage'
+  guard -> lambda 'Sets concurrency to 0 or restores it'
+  guard -> cloudfront 'Disables or enables distribution'
+}
+
+views {
+  view index {
+    title 'System context'
+    description 'Who uses Weather Bridge and what it depends on'
+    include person, agent, weatherBridge, nws, pages
+    autoLayout LeftRight
+  }
+
+  view containers of weatherBridge {
+    title 'Containers'
+    description 'Every interface calls the same Weather service. The HTTP server carries REST routes and /mcp side by side; MCP tools also run over stdio.'
+    include *
+    include person, agent, pages, nws
+    // Show REST and /mcp as peers inside the HTTP server, so MCP does not read as a layer in front of REST.
+    include httpApi.routes, httpApi.mcpHttp
+    // Hosting has its own deployment view; here it only adds crossing edges.
+    exclude aws
+    autoLayout TopBottom
+  }
+
+  view httpApi of httpApi {
+    title 'HTTP server'
+    include *
+    autoLayout TopBottom
+  }
+
+  view interfaces {
+    title 'Interfaces and transports'
+    description 'HTTP carries REST and MCP. REST, MCP tools and the CLI are peer adapters over one Weather service. MCP also runs over stdio without HTTP.'
+    include person, agent, web, cli
+    include httpApi, middleware, routes, mcpHttp
+    include mcpServer, service
+    exclude person -> pages
+    autoLayout TopBottom
+  }
+
+  view service of service {
+    title 'Weather service'
+    description 'Admission, location resolution, NWS fetches and caches'
+    include *
+    autoLayout TopBottom
+  }
+
+  view deployment of aws {
+    title 'AWS deployment'
+    description 'CloudFront in front of one Lambda Function URL, with diagnostics and a usage guard'
+    include *
+    include person, agent, pages, nws
+    autoLayout LeftRight
+  }
+
+  dynamic view report {
+    title 'Building a weather report'
+    description 'GET /v1/weather, MCP get_weather and CLI weather follow the same path'
+
+    routes -> admission 'report(query)'
+    admission -> query 'Resolve location before taking a slot: 400, 404 or 409 on failure'
+    query -> cities 'Look up city or nearest city'
+    admission -> nwsClient 'In parallel: /points (6 h cache) and /alerts/active'
+    nwsClient -> pointsCache 'Grid lookup'
+    nwsClient -> limiter 'Start slot'
+    nwsClient -> nws 'GET /points and /alerts/active'
+    admission -> nwsClient 'In parallel: forecast, hourly, stations'
+    nwsClient -> docCache 'Cached documents'
+    nwsClient -> nws 'GET forecast, hourly, stations'
+    admission -> nwsClient 'Latest observation from up to 3 nearest stations'
+    nwsClient -> nws 'GET /stations/{id}/observations/latest'
+    admission -> normalize 'Assemble report, warnings, alertsStatus'
+    routes -> cachePolicy 'max-age up to 120 s, or no-store if partial'
+  }
+
+  dynamic view hourly {
+    title 'Building an hourly forecast'
+    description 'REST, MCP and CLI use one focused Weather::hourly operation'
+
+    routes -> admission 'hourly(query)'
+    admission -> query 'Resolve location before taking a slot'
+    query -> cities 'Look up city or nearest city'
+    admission -> nwsClient 'Discover /points grid link'
+    nwsClient -> pointsCache 'Reuse complete discovery for up to 6 h'
+    nwsClient -> nws 'GET /points/{lat},{lon}'
+    admission -> nwsClient 'Fetch only the discovered hourly URL'
+    nwsClient -> docCache 'Reuse hourly document for up to 120 s'
+    nwsClient -> nws 'GET /gridpoints/.../forecast/hourly'
+    admission -> normalize 'Build up to 24 periods; alerts not checked'
+    routes -> cachePolicy 'Bound public cache by source lifetime'
+  }
+}

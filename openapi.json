@@ -1,0 +1,1628 @@
+{
+  "components": {
+    "schemas": {
+      "ActiveAlerts": {
+        "additionalProperties": false,
+        "description": "Active alerts and whether they could be checked.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/Alert"
+            },
+            "type": "array"
+          },
+          "alertsStatus": {
+            "$ref": "#/components/schemas/CheckedAlertsStatus",
+            "description": "unavailable means alerts could not be checked, not that there are none."
+          },
+          "assembledAt": {
+            "description": "When this response was assembled, not when upstream data were observed.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cacheMaxAgeSeconds": {
+            "description": "Upstream responses are cached up to this many seconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/AlertSources"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          },
+          "warnings": {
+            "description": "Human-readable notes. Source failures make the response partial (Cache-Control: no-store).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "location",
+          "units",
+          "alerts",
+          "alertsStatus",
+          "sources",
+          "warnings",
+          "assembledAt",
+          "cacheMaxAgeSeconds"
+        ],
+        "type": "object"
+      },
+      "ActiveAlertsEnvelope": {
+        "additionalProperties": false,
+        "description": "`{ \"data\": ..., \"meta\": ... }` wrapper for every successful response.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ActiveAlerts"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "Alert": {
+        "additionalProperties": false,
+        "description": "One active NWS alert. Text fields are the original NWS wording.",
+        "properties": {
+          "area": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effectiveAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headline": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instruction": {
+            "description": "Original NWS instruction text.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "severity",
+          "headline",
+          "description",
+          "instruction",
+          "effectiveAt",
+          "expiresAt",
+          "area"
+        ],
+        "type": "object"
+      },
+      "AlertSources": {
+        "additionalProperties": false,
+        "properties": {
+          "alerts": {
+            "$ref": "#/components/schemas/QuerySource"
+          }
+        },
+        "required": [
+          "alerts"
+        ],
+        "type": "object"
+      },
+      "Attribution": {
+        "additionalProperties": false,
+        "properties": {
+          "license": {
+            "description": "Present when the source requires a license notice.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      },
+      "CheckedAlertsStatus": {
+        "description": "Alert check outcomes for endpoints that check alerts.",
+        "oneOf": [
+          {
+            "const": "checked",
+            "description": "Alerts were checked; an empty list means none are active.",
+            "type": "string"
+          },
+          {
+            "const": "unavailable",
+            "description": "The alert check failed. This does not mean there are no alerts.",
+            "type": "string"
+          }
+        ]
+      },
+      "Cities": {
+        "description": "Up to ten city search matches, ordered by population.",
+        "items": {
+          "$ref": "#/components/schemas/City"
+        },
+        "maxItems": 10,
+        "type": "array"
+      },
+      "CitiesEnvelope": {
+        "additionalProperties": false,
+        "description": "`{ \"data\": ..., \"meta\": ... }` wrapper for every successful response.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Cities"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "City": {
+        "additionalProperties": false,
+        "description": "A city from the GeoNames-derived index (CC BY 4.0).",
+        "properties": {
+          "asciiName": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "id": {
+            "description": "GeoNames ID; use as cityId.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "latitude": {
+            "format": "double",
+            "type": "number"
+          },
+          "longitude": {
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "population": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "description": "Two-letter state or territory code.",
+            "type": "string"
+          },
+          "stateName": {
+            "type": "string"
+          },
+          "timeZone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "asciiName",
+          "state",
+          "stateName",
+          "country",
+          "latitude",
+          "longitude",
+          "population",
+          "timeZone"
+        ],
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "description": "Wire shape of an error response: `{\"errors\": [ErrorObject]}`.",
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorObject"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      },
+      "ErrorCode": {
+        "description": "Each code has one HTTP status: INVALID_LOCATION 400, FORBIDDEN 403, CITY_NOT_FOUND 404, AMBIGUOUS_CITY 409, REQUEST_TOO_LARGE 413, OUTSIDE_COVERAGE 422, UPSTREAM_UNAVAILABLE 502, BUSY 503, UPSTREAM_TIMEOUT 504.",
+        "oneOf": [
+          {
+            "const": "INVALID_LOCATION",
+            "description": "Any invalid request input: unknown or malformed query parameters, an invalid location or an unreadable request body.",
+            "type": "string"
+          },
+          {
+            "const": "CITY_NOT_FOUND",
+            "description": "No exact city match; choices hold suggestions when available.",
+            "type": "string"
+          },
+          {
+            "const": "AMBIGUOUS_CITY",
+            "description": "Several cities share the name; choices hold the candidates.",
+            "type": "string"
+          },
+          {
+            "const": "OUTSIDE_COVERAGE",
+            "description": "NWS does not cover the location.",
+            "type": "string"
+          },
+          {
+            "const": "UPSTREAM_UNAVAILABLE",
+            "description": "NWS failed or returned an unusable response.",
+            "type": "string"
+          },
+          {
+            "const": "UPSTREAM_TIMEOUT",
+            "description": "The weather lookup or HTTP request deadline passed.",
+            "type": "string"
+          },
+          {
+            "const": "BUSY",
+            "description": "Too many weather lookups are in flight.",
+            "type": "string"
+          },
+          {
+            "const": "FORBIDDEN",
+            "description": "The request did not come through the public address.",
+            "type": "string"
+          },
+          {
+            "const": "REQUEST_TOO_LARGE",
+            "description": "The HTTP request body exceeded the size limit.",
+            "type": "string"
+          }
+        ]
+      },
+      "ErrorObject": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "description": "Candidates for AMBIGUOUS_CITY and suggestions for CITY_NOT_FOUND; otherwise null.",
+            "items": {
+              "$ref": "#/components/schemas/City"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP status as a string, e.g. \"409\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "code",
+          "detail",
+          "choices"
+        ],
+        "type": "object"
+      },
+      "GridPoint": {
+        "additionalProperties": false,
+        "description": "Point sent to the NWS /points grid lookup: the location rounded to two decimals (about 1 km) so nearby requests share the grid lookup and its forecasts. Alerts use four-decimal coordinate precision rather than this grid point.",
+        "properties": {
+          "latitude": {
+            "format": "double",
+            "type": "number"
+          },
+          "longitude": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ],
+        "type": "object"
+      },
+      "HourlyAlertsStatus": {
+        "description": "The hourly endpoint deliberately does not check alerts.",
+        "enum": [
+          "not-checked"
+        ],
+        "type": "string"
+      },
+      "HourlyForecast": {
+        "additionalProperties": false,
+        "description": "Next 24 hourly forecast periods. Alerts are not checked.",
+        "properties": {
+          "alertsStatus": {
+            "$ref": "#/components/schemas/HourlyAlertsStatus",
+            "description": "This endpoint does not check alerts; use /v1/alerts."
+          },
+          "assembledAt": {
+            "description": "When this response was assembled, not when upstream data were observed.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cacheMaxAgeSeconds": {
+            "description": "Upstream responses are cached up to this many seconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hourly": {
+            "items": {
+              "$ref": "#/components/schemas/Period"
+            },
+            "maxItems": 24,
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/HourlySources"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          },
+          "warnings": {
+            "description": "Always includes a fixed note that alerts were not checked; that note alone does not make the response partial.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "location",
+          "units",
+          "hourly",
+          "alertsStatus",
+          "sources",
+          "warnings",
+          "assembledAt",
+          "cacheMaxAgeSeconds"
+        ],
+        "type": "object"
+      },
+      "HourlyForecastEnvelope": {
+        "additionalProperties": false,
+        "description": "`{ \"data\": ..., \"meta\": ... }` wrapper for every successful response.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/HourlyForecast"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "HourlySources": {
+        "additionalProperties": false,
+        "properties": {
+          "hourly": {
+            "$ref": "#/components/schemas/IssuedSource"
+          }
+        },
+        "required": [
+          "hourly"
+        ],
+        "type": "object"
+      },
+      "IssuedSource": {
+        "additionalProperties": false,
+        "description": "An NWS document and when it was issued.",
+        "properties": {
+          "issuedAt": {
+            "description": "NWS update time; null when unavailable.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "issuedAt"
+        ],
+        "type": "object"
+      },
+      "Location": {
+        "additionalProperties": false,
+        "properties": {
+          "cityId": {
+            "description": "GeoNames ID when the location came from the city index.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "gridLookupPoint": {
+            "$ref": "#/components/schemas/GridPoint",
+            "description": "The rounded point sent to the NWS /points grid lookup; forecasts follow that grid."
+          },
+          "latitude": {
+            "description": "City center, or the latitude supplied.",
+            "format": "double",
+            "type": "number"
+          },
+          "longitude": {
+            "description": "City center, or the longitude supplied.",
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "precision": {
+            "$ref": "#/components/schemas/Precision"
+          },
+          "timeZone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "latitude",
+          "longitude",
+          "timeZone",
+          "cityId",
+          "precision",
+          "gridLookupPoint"
+        ],
+        "type": "object"
+      },
+      "Meta": {
+        "additionalProperties": false,
+        "properties": {
+          "attribution": {
+            "description": "Data sources that must be credited.",
+            "items": {
+              "$ref": "#/components/schemas/Attribution"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "attribution"
+        ],
+        "type": "object"
+      },
+      "Observation": {
+        "additionalProperties": false,
+        "description": "Station observation, never a forecast. Missing quantities are null.",
+        "properties": {
+          "ageSeconds": {
+            "description": "Seconds since observedAt; null when the timestamp is invalid.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "condition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "humidityPercent": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "sourceUrl": {
+            "description": "NWS URL of this observation.",
+            "type": "string"
+          },
+          "stale": {
+            "description": "True when over 2 hours old or the timestamp is invalid.",
+            "type": "boolean"
+          },
+          "station": {
+            "description": "NWS station identifier.",
+            "type": "string"
+          },
+          "stationDistanceKm": {
+            "format": "double",
+            "type": "number"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Quantity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "windDirectionDegrees": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "windSpeed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Quantity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "observedAt",
+          "ageSeconds",
+          "stale",
+          "station",
+          "stationDistanceKm",
+          "condition",
+          "temperature",
+          "humidityPercent",
+          "windSpeed",
+          "windDirectionDegrees",
+          "sourceUrl"
+        ],
+        "type": "object"
+      },
+      "Period": {
+        "additionalProperties": false,
+        "description": "One NWS forecast period (daily or hourly).",
+        "properties": {
+          "condition": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "description": "Official NWS forecast text, verbatim; measurements keep the original NWS units.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endsAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isDaytime": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "precipitationProbabilityPercent": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "startsAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Quantity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "wind": {
+            "description": "Speed and direction in the selected units, e.g. 8–16 km/h NW.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "startsAt",
+          "endsAt",
+          "isDaytime",
+          "temperature",
+          "precipitationProbabilityPercent",
+          "wind",
+          "condition",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "Precision": {
+        "description": "city-center when resolved from the city index; coordinates when supplied by the caller.",
+        "oneOf": [
+          {
+            "const": "city-center",
+            "description": "Resolved from the city index; coordinates are the city center.",
+            "type": "string"
+          },
+          {
+            "const": "coordinates",
+            "description": "Coordinates supplied by the caller.",
+            "type": "string"
+          }
+        ]
+      },
+      "Quantity": {
+        "additionalProperties": false,
+        "description": "A measurement in the selected units.",
+        "properties": {
+          "unit": {
+            "$ref": "#/components/schemas/Unit"
+          },
+          "value": {
+            "description": "Rounded to one decimal.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value",
+          "unit"
+        ],
+        "type": "object"
+      },
+      "QuerySource": {
+        "additionalProperties": false,
+        "description": "An NWS query URL.",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "ReportSources": {
+        "additionalProperties": false,
+        "properties": {
+          "alerts": {
+            "$ref": "#/components/schemas/QuerySource"
+          },
+          "forecast": {
+            "$ref": "#/components/schemas/IssuedSource"
+          },
+          "hourly": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssuedSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent when the grid lookup did not provide a safe hourly source URL."
+          }
+        },
+        "required": [
+          "forecast",
+          "hourly",
+          "alerts"
+        ],
+        "type": "object"
+      },
+      "Unit": {
+        "description": "°F and mph for us units; °C and km/h for metric units.",
+        "enum": [
+          "°F",
+          "°C",
+          "mph",
+          "km/h"
+        ],
+        "type": "string"
+      },
+      "Units": {
+        "description": "Unit system for numeric temperatures and winds.",
+        "enum": [
+          "us",
+          "metric"
+        ],
+        "type": "string"
+      },
+      "WeatherReport": {
+        "additionalProperties": false,
+        "description": "Full weather report: observation, forecast, hourly periods and alerts.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/Alert"
+            },
+            "type": "array"
+          },
+          "alertsStatus": {
+            "$ref": "#/components/schemas/CheckedAlertsStatus",
+            "description": "See AlertsStatus. unavailable means alerts could not be checked."
+          },
+          "assembledAt": {
+            "description": "When this response was assembled, not when upstream data were observed.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cacheMaxAgeSeconds": {
+            "description": "Upstream responses are cached up to this many seconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Observation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Station observation or null; never a forecast."
+          },
+          "forecast": {
+            "items": {
+              "$ref": "#/components/schemas/Period"
+            },
+            "maxItems": 14,
+            "type": "array"
+          },
+          "hourly": {
+            "description": "Empty when the hourly forecast failed (see warnings).",
+            "items": {
+              "$ref": "#/components/schemas/Period"
+            },
+            "maxItems": 24,
+            "type": "array"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/ReportSources"
+          },
+          "summary": {
+            "description": "Official forecast text for the first period.",
+            "type": "string"
+          },
+          "units": {
+            "$ref": "#/components/schemas/Units"
+          },
+          "warnings": {
+            "description": "Human-readable notes. Source failures make the response partial (Cache-Control: no-store).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "location",
+          "units",
+          "summary",
+          "current",
+          "forecast",
+          "hourly",
+          "alerts",
+          "alertsStatus",
+          "warnings",
+          "sources",
+          "assembledAt",
+          "cacheMaxAgeSeconds"
+        ],
+        "type": "object"
+      },
+      "WeatherReportEnvelope": {
+        "additionalProperties": false,
+        "description": "`{ \"data\": ..., \"meta\": ... }` wrapper for every successful response.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WeatherReport"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Friendly NWS weather with local GeoNames city lookup. MCP at /mcp uses Streamable HTTP, not REST. GET and HEAD on /v1/* and /openapi.json send Access-Control-Allow-Origin: * (public, read-only, no credentials), so browser clients on any origin can call the API. Responses carry Cache-Control: complete reports are public with max-age and s-maxage equal to the remaining life of their oldest upstream source (at most 120 s); 400/404/409 errors are public, max-age=60; city search is public, max-age=86400; reports with alertsStatus unavailable or a partial-source warning, 422 and 5xx errors are no-store.",
+    "title": "Weather Bridge",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain; charset=utf-8": {}
+            },
+            "description": "plain text"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          }
+        },
+        "summary": "Bounded Prometheus operational metrics with fixed labels"
+      }
+    },
+    "/v1/alerts": {
+      "get": {
+        "description": "Supply exactly one location mode: city, cityId, or both lat and lon. Fetches only NWS active alerts, independent of forecast availability. alertsStatus unavailable means alerts could not be checked, not that there are none. Cached up to 120 seconds. US/territory coverage.",
+        "operationId": "getActiveAlerts",
+        "parameters": [
+          {
+            "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+            "in": "query",
+            "name": "city",
+            "schema": {
+              "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+              "examples": [
+                "Seattle, WA"
+              ],
+              "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF]){0,118}(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?![\\s\\S])",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+            "in": "query",
+            "name": "cityId",
+            "schema": {
+              "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+              "format": "uint64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lat",
+            "schema": {
+              "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lon",
+            "schema": {
+              "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Unit system for numeric temperatures and winds.",
+            "in": "query",
+            "name": "units",
+            "schema": {
+              "default": "us",
+              "description": "Unit system for numeric temperatures and winds.",
+              "enum": [
+                "us",
+                "metric"
+              ],
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveAlertsEnvelope"
+                }
+              }
+            },
+            "description": "Active alerts and alert-check status; an alert-check failure is alertsStatus unavailable with a warning."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid query, location or request body (INVALID_LOCATION)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "City not found (CITY_NOT_FOUND); suggestions in choices when available"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Ambiguous city (AMBIGUOUS_CITY); select one of choices"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request body exceeds 16 KiB (REQUEST_TOO_LARGE)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Outside NWS coverage (OUTSIDE_COVERAGE)"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NWS unavailable (UPSTREAM_UNAVAILABLE)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many in-flight requests (BUSY)"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Weather lookup or HTTP request deadline exceeded (UPSTREAM_TIMEOUT)"
+          }
+        },
+        "summary": "Active official alerts; inspect alertsStatus"
+      }
+    },
+    "/v1/cities": {
+      "get": {
+        "operationId": "searchCities",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "examples": [
+                "Springfield, IL"
+              ],
+              "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF]){0,118}(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?![\\s\\S])",
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitiesEnvelope"
+                }
+              }
+            },
+            "description": "Up to 10 exact or prefix matches ordered by population"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid query, location or request body (INVALID_LOCATION)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request body exceeds 16 KiB (REQUEST_TOO_LARGE)"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Weather lookup or HTTP request deadline exceeded (UPSTREAM_TIMEOUT)"
+          }
+        },
+        "summary": "Search US city names or prefixes; optional state qualifier"
+      }
+    },
+    "/v1/forecast/hourly": {
+      "get": {
+        "description": "Supply exactly one location mode: city, cityId, or both lat and lon. Fetches only the NWS grid lookup and hourly forecast; alerts are not checked (alertsStatus is not-checked). Hourly data are cached up to 120 seconds and grid lookups up to six hours. US/territory coverage.",
+        "operationId": "getHourlyForecast",
+        "parameters": [
+          {
+            "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+            "in": "query",
+            "name": "city",
+            "schema": {
+              "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+              "examples": [
+                "Seattle, WA"
+              ],
+              "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF]){0,118}(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?![\\s\\S])",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+            "in": "query",
+            "name": "cityId",
+            "schema": {
+              "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+              "format": "uint64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lat",
+            "schema": {
+              "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lon",
+            "schema": {
+              "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Unit system for numeric temperatures and winds.",
+            "in": "query",
+            "name": "units",
+            "schema": {
+              "default": "us",
+              "description": "Unit system for numeric temperatures and winds.",
+              "enum": [
+                "us",
+                "metric"
+              ],
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HourlyForecastEnvelope"
+                }
+              }
+            },
+            "description": "Hourly forecast periods. A failed hourly fetch returns 502."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid query, location or request body (INVALID_LOCATION)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "City not found (CITY_NOT_FOUND); suggestions in choices when available"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Ambiguous city (AMBIGUOUS_CITY); select one of choices"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request body exceeds 16 KiB (REQUEST_TOO_LARGE)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Outside NWS coverage (OUTSIDE_COVERAGE)"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NWS unavailable (UPSTREAM_UNAVAILABLE)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many in-flight requests (BUSY)"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Weather lookup or HTTP request deadline exceeded (UPSTREAM_TIMEOUT)"
+          }
+        },
+        "summary": "Next 24 hourly forecast periods"
+      }
+    },
+    "/v1/weather": {
+      "get": {
+        "description": "Supply exactly one location mode: city, cityId, or both lat and lon. Forecasts, observations and alerts are cached up to 120 seconds and NWS grid lookups up to six hours; city centers approximate a point. US/territory coverage.",
+        "operationId": "getWeather",
+        "parameters": [
+          {
+            "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+            "in": "query",
+            "name": "city",
+            "schema": {
+              "description": "Exact city name, optionally qualified with state, e.g. Seattle, WA. Ambiguous names return choices.",
+              "examples": [
+                "Seattle, WA"
+              ],
+              "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF]){0,118}(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]|[^\\uD800-\\uDFFF\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*(?![\\s\\S])",
+              "type": "string"
+            },
+            "style": "form"
+          },
+          {
+            "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+            "in": "query",
+            "name": "cityId",
+            "schema": {
+              "description": "GeoNames city ID from search_cities. Alternative to city or coordinates.",
+              "format": "uint64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lat",
+            "schema": {
+              "description": "Latitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+            "in": "query",
+            "name": "lon",
+            "schema": {
+              "description": "Longitude. The NWS grid lookup uses the value rounded to two decimals (see location.gridLookupPoint); alerts use four decimals.",
+              "format": "double",
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            "style": "form"
+          },
+          {
+            "description": "Unit system for numeric temperatures and winds.",
+            "in": "query",
+            "name": "units",
+            "schema": {
+              "default": "us",
+              "description": "Unit system for numeric temperatures and winds.",
+              "enum": [
+                "us",
+                "metric"
+              ],
+              "type": "string"
+            },
+            "style": "form"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherReportEnvelope"
+                }
+              }
+            },
+            "description": "Weather report; may contain partial-source warnings."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Invalid query, location or request body (INVALID_LOCATION)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "City not found (CITY_NOT_FOUND); suggestions in choices when available"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Ambiguous city (AMBIGUOUS_CITY); select one of choices"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request body exceeds 16 KiB (REQUEST_TOO_LARGE)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Outside NWS coverage (OUTSIDE_COVERAGE)"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NWS unavailable (UPSTREAM_UNAVAILABLE)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many in-flight requests (BUSY)"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Weather lookup or HTTP request deadline exceeded (UPSTREAM_TIMEOUT)"
+          }
+        },
+        "summary": "Weather by city or coordinates"
+      }
+    },
+    "/version": {
+      "get": {
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "revision": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "revision"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request did not come through the public address (FORBIDDEN). Only when the server is configured with an origin-verify value."
+          }
+        },
+        "summary": "Running version and embedded source revision"
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "The Weather Bridge server that serves this document",
+      "url": "/"
+    }
+  ]
+}

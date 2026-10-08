@@ -1,0 +1,6 @@
+# Single source of truth for the Rust toolchain used locally and in CI.
+# Must stay >= Cargo.toml rust-version (1.88). CI installs exactly this file.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

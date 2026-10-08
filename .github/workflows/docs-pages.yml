@@ -1,0 +1,81 @@
+name: API docs on GitHub Pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/site/**'
+      - 'docs/architecture/**'
+      - 'scripts/build-docs.py'
+      - 'scripts/test-docs.cjs'
+      - 'openapi.json'
+      - 'web/vendor/**'
+      - '.github/workflows/docs-pages.yml'
+  pull_request:
+    paths:
+      - 'docs/site/**'
+      - 'docs/architecture/**'
+      - 'scripts/build-docs.py'
+      - 'scripts/test-docs.cjs'
+      - 'openapi.json'
+      - 'web/vendor/**'
+      - '.github/workflows/docs-pages.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: docs-pages-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just@1.58.0
+      # LikeC4 is pinned to an exact version and installed outside the checkout, without
+      # install scripts. The single-file build inlines every asset and uses hash routing, so
+      # the page works under any Pages subpath.
+      - name: Install documentation tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/likec4" --no-save --ignore-scripts --no-audit --no-fund likec4@1.59.4
+          npm install --prefix "$RUNNER_TEMP/docs-browser" --no-save --ignore-scripts --no-audit --no-fund @playwright/test@1.62.1
+      - name: Install documentation browsers
+        run: node "$RUNNER_TEMP/docs-browser/node_modules/@playwright/test/cli.js" install --with-deps chromium webkit
+      # Forks set the WEATHER_BRIDGE_API_URL repository variable to their deployment's
+      # URL. When it is unset, the script default (the author's demo) is used. The value goes
+      # through env, not inline expansion, so it cannot inject shell syntax.
+      - name: Check static documentation
+        env:
+          API_URL: ${{ vars.WEATHER_BRIDGE_API_URL }}
+          NODE_PATH: ${{ runner.temp }}/docs-browser/node_modules
+        run: |
+          export PATH="$RUNNER_TEMP/likec4/node_modules/.bin:$PATH"
+          just check-docs
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: target/docs-site
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Deploy documentation
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

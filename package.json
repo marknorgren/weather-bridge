@@ -1,0 +1,32 @@
+{
+    "name": "weather-bridge-frontend",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "generate": "node frontend/build.mjs",
+        "check:generated": "node frontend/build.mjs --check",
+        "typecheck": "tsc --noEmit",
+        "test": "node --test frontend/*.test.mjs",
+        "check": "pnpm run lint && pnpm run format:check && pnpm run check:generated && pnpm run typecheck && pnpm test",
+        "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives frontend web/weather.ts web/developer.js e2e",
+        "format:check": "oxfmt --check frontend web/weather.ts web/developer.js package.json tsconfig.json .oxlintrc.json .oxfmtrc.json e2e",
+        "format": "oxfmt --write frontend web/weather.ts web/developer.js package.json tsconfig.json .oxlintrc.json .oxfmtrc.json e2e",
+        "test:e2e": "playwright test --config=e2e/playwright.config.mjs"
+    },
+    "dependencies": {
+        "openapi-fetch": "0.17.0"
+    },
+    "devDependencies": {
+        "@playwright/test": "1.58.2",
+        "esbuild": "0.28.2",
+        "openapi-typescript": "7.13.0",
+        "oxfmt": "0.71.0",
+        "oxlint": "1.86.0",
+        "oxlint-tsgolint": "7.0.2003",
+        "typescript": "5.9.3"
+    },
+    "engines": {
+        "node": ">=22.18.0"
+    },
+    "packageManager": "pnpm@11.25.0"
+}

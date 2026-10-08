@@ -1,0 +1,17 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private Weather Bridge deployment artifacts. Terraform deletes superseded objects; the current objects are kept for CloudFormation rollback.",
+  "Resources": {
+    "Artifacts": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {"BlockPublicAcls": true, "BlockPublicPolicy": true, "IgnorePublicAcls": true, "RestrictPublicBuckets": true},
+        "OwnershipControls": {"Rules": [{"ObjectOwnership": "BucketOwnerEnforced"}]},
+        "BucketEncryption": {"ServerSideEncryptionConfiguration": [{"ServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]},
+        "LifecycleConfiguration": {"Rules": [{"Id": "AbortIncompleteUploads", "Status": "Enabled", "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}}]},
+        "Tags": [{"Key": "Project", "Value": "weather-bridge"}]
+      }
+    }
+  },
+  "Outputs": {"Bucket": {"Value": {"Ref": "Artifacts"}}}
+}
