@@ -7,6 +7,7 @@
         "check:generated": "node frontend/build.mjs --check",
         "typecheck": "tsc --noEmit",
         "test": "node --test frontend/*.test.mjs",
+        "test:security": "node --test frontend/city-query.test.mjs frontend/weather.test.mjs",
         "check": "pnpm run lint && pnpm run format:check && pnpm run check:generated && pnpm run typecheck && pnpm test",
         "lint": "oxlint --type-aware --deny-warnings --report-unused-disable-directives frontend web/weather.ts web/developer.js e2e",
         "format:check": "oxfmt --check frontend web/weather.ts web/developer.js package.json tsconfig.json .oxlintrc.json .oxfmtrc.json e2e",

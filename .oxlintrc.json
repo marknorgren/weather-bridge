@@ -13,6 +13,10 @@
     },
     "rules": {
         "eslint/no-undef": "error",
+        "eslint/no-eval": "error",
+        "eslint/no-new-func": "error",
+        "eslint/no-implied-eval": "error",
+        "eslint/no-script-url": "error",
         "eslint/eqeqeq": "error",
         "eslint/prefer-const": "error",
         "import/no-duplicates": "error",
@@ -47,6 +51,23 @@
             "files": ["frontend/*.mjs"],
             "env": {
                 "node": true
+            },
+            "rules": {
+                "eslint/no-restricted-imports": [
+                    "error",
+                    {
+                        "paths": [
+                            {
+                                "name": "node:vm",
+                                "message": "Import the page initializer for tests; use browser fixtures for generated bundles."
+                            },
+                            {
+                                "name": "vm",
+                                "message": "Import the page initializer for tests; use browser fixtures for generated bundles."
+                            }
+                        ]
+                    }
+                ]
             }
         },
         {

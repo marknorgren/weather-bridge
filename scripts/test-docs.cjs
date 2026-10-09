@@ -31,9 +31,6 @@ const server = http.createServer(async (req, res) => {
           page.on('pageerror', error => errors.push(error.message));
           await page.route('**/*', async route => {
             const url = new URL(route.request().url());
-            if (process.env.DOCS_TEST_STYLES && url.pathname === '/styles.css') {
-              return route.fulfill({ contentType: 'text/css', body: await fs.readFile(process.env.DOCS_TEST_STYLES, 'utf8') });
-            }
             if (url.origin === origin) return route.continue();
             if (url.origin === 'https://bridge.wx.mrkd.co' && url.pathname === '/v1/weather') {
               assert.equal(url.searchParams.get('city'), 'Minneapolis, MN');

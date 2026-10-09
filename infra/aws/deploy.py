@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
@@ -13,13 +14,46 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / 'infra/aws/terraform'
 sys.path.insert(0, str(ROOT / 'scripts'))
-from release import ReleaseError, verify_release  # noqa: E402
+from release import ReleaseError, artifact_path, verify_release  # noqa: E402
+
+
+def aws_option(value, label):
+    message = f'Invalid AWS {label}: use a name without option prefixes or controls'
+    if not 1 <= len(value) <= 128 or value[0] not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789':
+        raise argparse.ArgumentTypeError(message)
+    # Construct each option from checked ASCII characters, with no raw input left
+    # in the subprocess argument array.
+    characters = []
+    for character in value:
+        if character not in (
+            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+            'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+            '_', '.', '@', ':', '/', ' ', '-',
+        ):
+            raise argparse.ArgumentTypeError(message)
+        characters.append(character)
+    return ''.join(characters)
+
+
+def aws_profile(value):
+    return aws_option(value, 'profile')
+
+
+def aws_region(value):
+    value = aws_option(value, 'region')
+    if not re.fullmatch(r'[a-z]{2,4}(?:-[a-z]{1,16}){1,3}-[0-9]{1,2}', value):
+        raise argparse.ArgumentTypeError('Invalid AWS region: use a region name such as us-east-1')
+    return value
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--profile', help='AWS CLI profile; omit to use the standard credential chain (for example OIDC)')
-parser.add_argument('--region', default='us-east-1')
+parser.add_argument('--profile', type=aws_profile,
+                    help='AWS CLI profile; omit to use the standard credential chain (for example OIDC)')
+parser.add_argument('--region', default='us-east-1', type=aws_region)
 parser.add_argument('--contact', required=True, help='Public NWS contact URL or email')
-parser.add_argument('--release', required=True, type=Path,
+parser.add_argument('--release', required=True, type=artifact_path,
                     help='Directory containing app.zip, guard.zip, and release-manifest.json')
 parser.add_argument('--revision', required=True,
                     help='Exact 40-character Git revision expected in the verified release')
@@ -39,11 +73,15 @@ try:
     release_manifest = verify_release(args.release, args.revision)
 except ReleaseError as error:
     raise SystemExit(f'Release verification failed before AWS access: {error}') from error
-state_dir = ROOT / 'target/aws-deployment'
-state_dir.mkdir(parents=True, exist_ok=True)
-for release_name in ('app.zip', 'guard.zip', 'release-manifest.json'):
-    shutil.copyfile(args.release / release_name, state_dir / release_name)
 try:
+    target_dir = artifact_path(ROOT / 'target', root=ROOT)
+    state_dir = artifact_path(target_dir / 'aws-deployment', root=target_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    copies = [(artifact_path(args.release / name, root=args.release),
+               artifact_path(state_dir / name, root=state_dir))
+              for name in ('app.zip', 'guard.zip', 'release-manifest.json')]
+    for source, destination in copies:
+        shutil.copyfile(source, destination)
     release_manifest = verify_release(state_dir, args.revision)
 except ReleaseError as error:
     raise SystemExit(f'Staged release verification failed before AWS access: {error}') from error
@@ -52,8 +90,8 @@ except ReleaseError as error:
 def aws(*parts, json_output=False, allow_missing=False):
     command = ['aws', *parts]
     if args.profile:
-        command.extend(('--profile', args.profile))
-    command.extend(('--region', args.region, '--no-cli-pager'))
+        command.append('--profile=' + aws_profile(args.profile))
+    command.extend(('--region=' + aws_region(args.region), '--no-cli-pager'))
     result = subprocess.run(command, text=True, capture_output=json_output or allow_missing)
     if result.returncode:
         if allow_missing and 'does not exist' in result.stderr:

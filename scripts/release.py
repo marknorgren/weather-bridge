@@ -25,7 +25,26 @@ class ReleaseError(ValueError):
     pass
 
 
+def artifact_path(value, *, root=None):
+    """Keep an artifact inside its declared directory, without following artifact links."""
+    if '..' in Path(value).parts:
+        raise ReleaseError('artifact paths must not contain parent traversal')
+    # Operators choose the directory, including absolute downloaded-release paths.
+    # Resolve the parent, then check the complete directory prefix before probing
+    # the leaf. The separator prevents a sibling such as release-other matching.
+    absolute = os.path.abspath(value)
+    parent = os.path.realpath(os.path.dirname(absolute))
+    path = os.path.normpath(os.path.join(parent, os.path.basename(absolute)))
+    boundary = os.path.realpath(root) if root is not None else parent
+    if not path.startswith(boundary.rstrip(os.sep) + os.sep):
+        raise ReleaseError('artifact path escapes its declared directory')
+    if os.path.islink(path):
+        raise ReleaseError('artifact paths must not be symlinks')
+    return Path(path)
+
+
 def digest(path):
+    path = artifact_path(path)
     value = hashlib.sha256()
     with path.open('rb') as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b''):
@@ -67,6 +86,7 @@ def zip_members(archive, expected):
 
 
 def inspect_app(path, revision):
+    path = artifact_path(path)
     try:
         with zipfile.ZipFile(path) as archive:
             zip_members(archive, ('weather-bridge', 'bootstrap'))
@@ -81,6 +101,7 @@ def inspect_app(path, revision):
 
 
 def inspect_guard(path):
+    path = artifact_path(path)
     try:
         with zipfile.ZipFile(path) as archive:
             zip_members(archive, ('guard.py',))
@@ -93,10 +114,12 @@ def inspect_guard(path):
 
 
 def manifest_artifact(path, content_digest):
+    path = artifact_path(path)
     return {'sha256': digest(path), 'size': path.stat().st_size, 'contentSha256': content_digest}
 
 
 def write_zip(path, entries):
+    path = artifact_path(path)
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name, content, mode in entries:
             entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
@@ -111,8 +134,8 @@ def package_release(compiled_zip, output, revision):
     env_revision = os.environ.get(REVISION_ENV)
     if env_revision != revision:
         raise ReleaseError(f'{REVISION_ENV} must equal the packaged revision')
-    compiled_zip = Path(compiled_zip)
-    output = Path(output)
+    compiled_zip = artifact_path(compiled_zip)
+    output = artifact_path(output)
     try:
         with zipfile.ZipFile(compiled_zip) as compiled:
             zip_members(compiled, ('bootstrap',))
@@ -124,12 +147,14 @@ def package_release(compiled_zip, output, revision):
         raise ReleaseError(f'release output is not empty: {output}')
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.weather-bridge-release-', dir=output.parent) as temporary:
-        staging = Path(temporary)
-        write_zip(staging / 'app.zip', [
+        staging = artifact_path(temporary, root=output.parent)
+        app = artifact_path(staging / 'app.zip', root=staging)
+        guard = artifact_path(staging / 'guard.zip', root=staging)
+        write_zip(app, [
             ('weather-bridge', binary, 0o755),
             ('bootstrap', (ROOT / 'infra/aws/bootstrap').read_bytes(), 0o755),
         ])
-        write_zip(staging / 'guard.zip', [
+        write_zip(guard, [
             ('guard.py', (ROOT / 'infra/aws/guard.py').read_bytes(), 0o644),
         ])
         manifest = {
@@ -137,20 +162,23 @@ def package_release(compiled_zip, output, revision):
             'revision': revision,
             'target': TARGET,
             'artifacts': {
-                'app.zip': manifest_artifact(staging / 'app.zip', inspect_app(staging / 'app.zip', revision)),
-                'guard.zip': manifest_artifact(staging / 'guard.zip', inspect_guard(staging / 'guard.zip')),
+                'app.zip': manifest_artifact(app, inspect_app(app, revision)),
+                'guard.zip': manifest_artifact(guard, inspect_guard(guard)),
             },
         }
-        (staging / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
+        artifact_path(staging / MANIFEST, root=staging).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + '\n')
         verify_release(staging, revision)
         output.mkdir(parents=True, exist_ok=True)
         for name in RELEASE_FILES:
-            os.replace(staging / name, output / name)
+            os.replace(artifact_path(staging / name, root=staging),
+                       artifact_path(output / name, root=output))
     return manifest
 
 
 def load_manifest(directory):
-    path = Path(directory) / MANIFEST
+    directory = artifact_path(directory)
+    path = artifact_path(directory / MANIFEST, root=directory)
     if not path.is_file():
         raise ReleaseError(f'release manifest is missing: {path}')
     if path.stat().st_size > 16 * 1024:
@@ -163,7 +191,7 @@ def load_manifest(directory):
 
 
 def verify_release(directory, expected_revision):
-    directory = Path(directory)
+    directory = artifact_path(directory)
     expected_revision = require_revision(expected_revision, 'expected revision')
     manifest = load_manifest(directory)
     if not isinstance(manifest, dict) or manifest.get('schemaVersion') != 1:
@@ -178,7 +206,7 @@ def verify_release(directory, expected_revision):
         raise ReleaseError('release manifest must describe app.zip and guard.zip')
     content_checks = {'app.zip': inspect_app, 'guard.zip': inspect_guard}
     for name in ('app.zip', 'guard.zip'):
-        path = directory / name
+        path = artifact_path(directory / name, root=directory)
         record = artifacts[name]
         if not path.is_file() or not isinstance(record, dict):
             raise ReleaseError(f'{name} is missing from the release')
@@ -195,8 +223,8 @@ def verify_release(directory, expected_revision):
 
 
 def extract_archive(archive, expected_digest, destination):
-    archive = Path(archive)
-    destination = Path(destination)
+    archive = artifact_path(archive)
+    destination = artifact_path(destination)
     expected_digest = require_digest(expected_digest, 'archive digest')
     if digest(archive) != expected_digest:
         raise ReleaseError('release archive digest does not match GitHub')
@@ -207,7 +235,7 @@ def extract_archive(archive, expected_digest, destination):
         with zipfile.ZipFile(archive) as source:
             zip_members(source, RELEASE_FILES)
             for name in RELEASE_FILES:
-                (destination / name).write_bytes(source.read(name))
+                artifact_path(destination / name, root=destination).write_bytes(source.read(name))
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise ReleaseError(f'release archive is invalid: {error}') from error
 
@@ -248,22 +276,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest='command', required=True)
     package = subparsers.add_parser('package')
-    package.add_argument('--compiled-zip', required=True, type=Path)
-    package.add_argument('--output', required=True, type=Path)
+    package.add_argument('--compiled-zip', required=True, type=artifact_path)
+    package.add_argument('--output', required=True, type=artifact_path)
     package.add_argument('--revision', required=True)
     verify = subparsers.add_parser('verify')
-    verify.add_argument('--release', required=True, type=Path)
+    verify.add_argument('--release', required=True, type=artifact_path)
     verify.add_argument('--revision', required=True)
     extract = subparsers.add_parser('extract-artifact')
-    extract.add_argument('--archive', required=True, type=Path)
+    extract.add_argument('--archive', required=True, type=artifact_path)
     extract.add_argument('--digest', required=True)
-    extract.add_argument('--output', required=True, type=Path)
+    extract.add_argument('--output', required=True, type=artifact_path)
     select = subparsers.add_parser('select-artifact')
-    select.add_argument('--run', required=True, type=Path)
-    select.add_argument('--artifacts', required=True, type=Path)
+    select.add_argument('--run', required=True, type=artifact_path)
+    select.add_argument('--artifacts', required=True, type=artifact_path)
     select.add_argument('--repository', required=True)
     select.add_argument('--run-id', required=True, type=int)
-    select.add_argument('--github-output', type=Path)
+    select.add_argument('--github-output', type=artifact_path)
     args = parser.parse_args()
     try:
         if args.command == 'package':

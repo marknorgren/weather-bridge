@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import vm from 'node:vm';
+import { mountWeatherPage } from './weather-page.ts';
 
-const bundle = await readFile(new URL('../web/weather.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
 
 // A small DOM surface keeps these behavior tests independent of a browser download.
@@ -80,7 +79,7 @@ function page() {
         createElement: () => new Element(),
         createElementNS: () => new Element(),
     };
-    vm.runInNewContext(bundle, {
+    mountWeatherPage({
         document,
         location: { origin: 'http://localhost' },
         HTMLInputElement: Input,

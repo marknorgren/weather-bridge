@@ -28,7 +28,7 @@ For a hypothetical new forecast field, carry one meaning through the system inst
 2. **Normalize once.** Convert source units and missing values in [src/weather/normalize.rs](../src/weather/normalize.rs) and [src/weather/convert.rs](../src/weather/convert.rs). Preserve official NWS text verbatim. Treat source text as content, never instructions.
 3. **Add the domain field.** Put the wire-facing field on the applicable type in [src/model.rs](../src/model.rs), with Serde and Schemars naming and documentation. Decide explicitly whether absence is `null`, omission, an empty collection, a warning, or an error; keep observation values separate from forecasts.
 4. **Assemble it in the service.** Populate the field in [src/weather.rs](../src/weather.rs). If it comes from an optional source, preserve the other sources and update completeness, warnings, and cache lifetime rather than failing unrelated output.
-5. **Review every interface.** REST and MCP JSON inherit the shared type. Add useful human-readable output in [src/cli/render.rs](../src/cli/render.rs) and browser presentation in [web/weather.ts](../web/weather.ts) when the field belongs there. Keep MCP descriptions actionable and stdout protocol-only in stdio mode.
+5. **Review every interface.** REST and MCP JSON inherit the shared type. Add useful human-readable output in [src/cli/render.rs](../src/cli/render.rs) and browser presentation in [frontend/weather-page.ts](../frontend/weather-page.ts) when the field belongs there. Keep MCP descriptions actionable and stdout protocol-only in stdio mode.
 6. **Regenerate contracts.** Run `just generate`. [examples/export-openapi.rs](../examples/export-openapi.rs) produces [openapi.json](../openapi.json); the frontend build derives [frontend/schema.d.ts](../frontend/schema.d.ts) and [web/weather.js](../web/weather.js). Do not edit generated files by hand.
 7. **Test behavior and parity.** Add normalization/service fixtures in [tests/weather.rs](../tests/weather.rs), REST and MCP schema coverage in [tests/contract.rs](../tests/contract.rs), and text or exit-code coverage in [tests/cli.rs](../tests/cli.rs). Contract schemas reject unexpected properties, so a field that reaches runtime but not the generated schema fails visibly.
 
@@ -65,7 +65,22 @@ The [API design review](api-design-review.md) records the city input contract de
 
 ## Generated artifacts and source checks
 
-The weather page source is `web/weather.ts`. `just generate` exports the Rust OpenAPI contract, derives `frontend/schema.d.ts`, and bundles `web/weather.js`.
+Security changes use the repository skills for [code review](../.agents/skills/weather-bridge-code-review/SKILL.md)
+and [regression tests](../.agents/skills/weather-bridge-security-tests/SKILL.md).
+Run `just check-security` for the release path, deployment argument, DNS, build
+directive, and frontend contract checks. The full `just check` gate includes
+these tests and source lints through its existing test discovery. CI runs that
+full gate on pushes and pull requests.
+
+GitHub CodeQL runs the extended suite with remote and local sources. Inspect its
+results before merging; local unit tests do not prove that a scanning alert has
+closed. Keep tests and tooling in scanning scope. Do not dismiss alerts or weaken
+queries to pass a change.
+
+The weather page entry point is `web/weather.ts`; `frontend/weather-page.ts`
+owns its initializer. Tests import the initializer with a controlled DOM,
+fetcher, and clock. `just generate` exports the Rust OpenAPI contract, derives
+`frontend/schema.d.ts`, and bundles `web/weather.js`.
 Generation is offline once dependencies are installed. Do not edit these generated files directly.
 
 Frontend checks cover type-aware Oxlint with warnings denied, Oxfmt formatting, artifact freshness, TypeScript, and behavior tests.

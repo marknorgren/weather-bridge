@@ -45,6 +45,15 @@ check-python:
     python3 -m unittest discover -s scripts -p 'test_*.py'
     python3 -m unittest discover -s infra/aws -p 'test_*.py'
 
+# Focused security regressions; these checks are also covered by just check.
+check-security:
+    python3 -m unittest scripts.test_security
+    python3 -m unittest discover -s infra/aws -p 'test_release.py'
+    python3 -m unittest discover -s infra/aws -p 'test_dns.py'
+    pnpm run lint
+    pnpm run test:security
+    cargo test --locked --test contract advertised_city_query_bounds_match_runtime_limits
+
 generate-openapi:
     cargo run --locked --example export-openapi -- openapi.json
 

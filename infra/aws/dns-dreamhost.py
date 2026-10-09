@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import sys
 import urllib.parse
 import urllib.request
@@ -15,18 +14,42 @@ def normalize(value):
     return value.lower().rstrip('.')
 
 
+LOWER = 'abcdefghijklmnopqrstuvwxyz'
+ALNUM = LOWER + '0123456789'
+HEX = '0123456789abcdef'
+
+
+def dns_label(value, alphabet=ALNUM + '-'):
+    return (1 <= len(value) <= 63 and value[0] in ALNUM and value[-1] in ALNUM
+            and all(character in alphabet for character in value))
+
+
+def acm_label(value):
+    return (2 <= len(value) <= 63 and value[0] == '_'
+            and all(character in HEX for character in value[1:]))
+
+
 def planned_records(domain, validation, target):
-    if not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', domain):
+    labels = domain.split('.') if len(domain) <= 253 else []
+    if (len(labels) < 2 or not all(dns_label(label) for label in labels)
+            or len(labels[-1]) < 2 or not all(character in LOWER for character in labels[-1])):
         raise ValueError('Use a full lowercase DNS hostname')
     records = []
     for record in validation:
         name, value = normalize(record['name']), normalize(record['value'])
-        if (record['type'] != 'CNAME' or not re.fullmatch(r'_[a-f0-9]+\.' + re.escape(domain), name)
-                or not re.fullmatch(r'_[a-f0-9]+\.[a-z0-9]+\.acm-validations\.aws', value)):
+        prefix, _, hostname = name.partition('.')
+        parts = value.split('.') if len(value) <= 253 else []
+        if (record['type'] != 'CNAME' or len(name) > 253
+                or not acm_label(prefix) or hostname != domain
+                or len(parts) != 4 or not acm_label(parts[0])
+                or not dns_label(parts[1], ALNUM) or parts[2:] != ['acm-validations', 'aws']):
             raise ValueError('Validation record must be an ACM CNAME for this exact hostname')
         records.append({'record': name, 'type': 'CNAME', 'value': value})
     if target:
-        if not re.fullmatch(r'd[a-z0-9]+\.cloudfront\.net', target):
+        parts = target.split('.') if len(target) <= 253 else []
+        if (len(parts) != 3 or parts[1:] != ['cloudfront', 'net']
+                or not parts[0].startswith('d') or len(parts[0]) < 2
+                or not dns_label(parts[0], ALNUM)):
             raise ValueError('Target must be a generated CloudFront hostname')
         records.append({'record': domain, 'type': 'CNAME', 'value': target})
     if not records:
