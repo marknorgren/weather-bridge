@@ -17,5 +17,9 @@ fn main() {
             panic!("WEATHER_BRIDGE_BUILD_REVISION must be valid UTF-8")
         }
     };
-    println!("cargo:rustc-env=WEATHER_BRIDGE_BUILD_REVISION_EMBEDDED={revision}");
+    // Keep Cargo's line protocol safe at the output boundary as well as validation.
+    println!(
+        "cargo:rustc-env=WEATHER_BRIDGE_BUILD_REVISION_EMBEDDED={}",
+        revision.replace(['\n', '\r'], "")
+    );
 }

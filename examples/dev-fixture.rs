@@ -14,7 +14,10 @@ async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("SYNTHETIC OFFLINE FIXTURE error: {error:#}");
+            eprintln!(
+                "SYNTHETIC OFFLINE FIXTURE error: {}",
+                format!("{error:#}").escape_debug()
+            );
             ExitCode::FAILURE
         }
     }
@@ -25,8 +28,9 @@ async fn run() -> anyhow::Result<()> {
     let fixture = dev_fixture(scenario).await;
     let bind = std::env::var("WEATHER_BRIDGE_DEV_BIND").unwrap_or_else(|_| DEFAULT_BIND.into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
+    let address = listener.local_addr()?;
     eprintln!(
-        "SYNTHETIC OFFLINE FIXTURE [{}] ready at http://{bind}",
+        "SYNTHETIC OFFLINE FIXTURE [{}] ready at http://{address}",
         scenario.as_str()
     );
     eprintln!("SYNTHETIC OFFLINE FIXTURE uses no live NWS data; press Ctrl-C to stop");

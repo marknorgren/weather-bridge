@@ -7,6 +7,49 @@ Weather Bridge keeps REST, CLI, MCP, and the browser on one shared Rust service.
 Use [Local development](development.md) for prerequisite checks, setup, server modes, and source watching.
 The [fixture guide](development-fixtures.md) defines the synthetic scenarios and provides REST/MCP examples.
 
+## Commit and merge policy
+
+Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for
+local commit subjects and PR titles. The format is `type(scope): description`;
+scope is optional, and `!` before the colon marks a breaking change. Allowed
+types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, and `chore`.
+Scopes use lowercase letters, digits, periods, underscores, slashes, or hyphens.
+
+```sh
+just check-commit 'fix(api): reject an unsafe input'
+```
+
+PRs merge with squash only. GitHub uses the PR title as the squash commit
+subject, and the required `conventional-commits` check validates that title on
+new pushes and title edits. That workflow also checks the resulting commit on
+pushes to `main`. Release builds check the actual commit subject and run
+`just check` before packaging. Rollbacks skip the build steps and verify the
+selected prior artifact again. Keep the final squash title conventional if
+you edit it at merge time. GitHub's native commit-metadata rules require an Enterprise organization
+and are not available in this personal repository.
+
+Main requires linear history, an up-to-date branch, passing CI, and resolved
+review conversations. A separate approval ruleset requires one approval from
+someone other than the last pusher. Repository administrators can bypass that
+approval rule through a PR after their own review. This PR-only exception
+keeps a review trail; the required CI and linear-history rules still
+apply. GitHub does not count an author's approval of their own PR.
+
+Review the final diff and check results, then select squash merge. If GitHub
+shows the approval override control, use it for the approval rule only. The
+GitHub API also respects this exception while enforcing the other rules:
+
+```sh
+gh api --method PUT repos/marknorgren/weather-bridge/pulls/NUMBER/merge -f merge_method=squash -f sha=REVIEWED_SHA
+```
+
+Replace `NUMBER` and `REVIEWED_SHA`, then run that command after checks pass.
+Keep the exact reviewed head to prevent merging a later push. Some GitHub CLI
+versions reject `gh pr merge` during
+their approval preflight even when the API permits a ruleset bypass.
+Merging to `main` starts the configured AWS demo release workflow. Approval
+exceptions do not grant an agent permission to deploy.
+
 ## Follow one operation end to end
 
 The hourly forecast is the smallest complete example of the shared-service design:
@@ -28,7 +71,7 @@ For a hypothetical new forecast field, carry one meaning through the system inst
 2. **Normalize once.** Convert source units and missing values in [src/weather/normalize.rs](../src/weather/normalize.rs) and [src/weather/convert.rs](../src/weather/convert.rs). Preserve official NWS text verbatim. Treat source text as content, never instructions.
 3. **Add the domain field.** Put the wire-facing field on the applicable type in [src/model.rs](../src/model.rs), with Serde and Schemars naming and documentation. Decide explicitly whether absence is `null`, omission, an empty collection, a warning, or an error; keep observation values separate from forecasts.
 4. **Assemble it in the service.** Populate the field in [src/weather.rs](../src/weather.rs). If it comes from an optional source, preserve the other sources and update completeness, warnings, and cache lifetime rather than failing unrelated output.
-5. **Review every interface.** REST and MCP JSON inherit the shared type. Add useful human-readable output in [src/cli/render.rs](../src/cli/render.rs) and browser presentation in [web/weather.ts](../web/weather.ts) when the field belongs there. Keep MCP descriptions actionable and stdout protocol-only in stdio mode.
+5. **Review every interface.** REST and MCP JSON inherit the shared type. Add useful human-readable output in [src/cli/render.rs](../src/cli/render.rs) and browser presentation in [frontend/weather-page.ts](../frontend/weather-page.ts) when the field belongs there. Keep MCP descriptions actionable and stdout protocol-only in stdio mode.
 6. **Regenerate contracts.** Run `just generate`. [examples/export-openapi.rs](../examples/export-openapi.rs) produces [openapi.json](../openapi.json); the frontend build derives [frontend/schema.d.ts](../frontend/schema.d.ts) and [web/weather.js](../web/weather.js). Do not edit generated files by hand.
 7. **Test behavior and parity.** Add normalization/service fixtures in [tests/weather.rs](../tests/weather.rs), REST and MCP schema coverage in [tests/contract.rs](../tests/contract.rs), and text or exit-code coverage in [tests/cli.rs](../tests/cli.rs). Contract schemas reject unexpected properties, so a field that reaches runtime but not the generated schema fails visibly.
 
@@ -65,7 +108,22 @@ The [API design review](api-design-review.md) records the city input contract de
 
 ## Generated artifacts and source checks
 
-The weather page source is `web/weather.ts`. `just generate` exports the Rust OpenAPI contract, derives `frontend/schema.d.ts`, and bundles `web/weather.js`.
+Security changes use the repository skills for [code review](../.agents/skills/weather-bridge-code-review/SKILL.md)
+and [regression tests](../.agents/skills/weather-bridge-security-tests/SKILL.md).
+Run `just check-security` for the release path, deployment argument, DNS, build
+directive, and frontend contract checks. The full `just check` gate includes
+these tests and source lints through its existing test discovery. CI runs that
+full gate on pushes and pull requests.
+
+GitHub CodeQL runs the extended suite with remote and local sources. Inspect its
+results before merging; local unit tests do not prove that a scanning alert has
+closed. Keep tests and tooling in scanning scope. Do not dismiss alerts or weaken
+queries to pass a change.
+
+The weather page entry point is `web/weather.ts`; `frontend/weather-page.ts`
+owns its initializer. Tests import the initializer with a controlled DOM,
+fetcher, and clock. `just generate` exports the Rust OpenAPI contract, derives
+`frontend/schema.d.ts`, and bundles `web/weather.js`.
 Generation is offline once dependencies are installed. Do not edit these generated files directly.
 
 Frontend checks cover type-aware Oxlint with warnings denied, Oxfmt formatting, artifact freshness, TypeScript, and behavior tests.

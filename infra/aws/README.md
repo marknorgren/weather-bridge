@@ -35,6 +35,15 @@ files before its first AWS or Terraform command, then verifies the staged copy
 again. A missing manifest, different revision, changed digest, wrong binary
 architecture, or wrong wrapper stops without touching AWS.
 
+Release tools accept relative paths and explicit absolute directories, including
+temporary downloaded artifacts. Parent traversal and artifact symlinks are
+rejected. Fixed-name files must resolve inside their selected release directory.
+Choose a directory that other users cannot change while packaging or deploying.
+AWS profiles must start with an ASCII letter or digit and contain only letters,
+digits, spaces, `_`, `.`, `@`, `:`, `/`, or `-` (at most 128 characters). Region
+values must use the AWS region-name form; values are passed as single named
+options before any AWS command runs.
+
 To roll back locally, download or retain a previous verified release directory
 and pass its manifest revision to `--revision`. Deployment never rebuilds a
 rollback revision.

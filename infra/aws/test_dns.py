@@ -30,6 +30,28 @@ class DnsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             dns.planned_records(DOMAIN, [], 'attacker.example.com')
 
+    def test_dns_label_and_name_limits_are_enforced(self):
+        for domain in ('a' * 64 + '.com', ('a' * 63 + '.') * 4 + 'com', 'a..com', '-a.com', 'a-.com'):
+            with self.subTest(domain=domain), self.assertRaises(ValueError):
+                dns.planned_records(domain, [], 'd123.cloudfront.net')
+
+    def test_cloudfront_label_is_bounded_before_validation(self):
+        with self.assertRaises(ValueError):
+            dns.planned_records(DOMAIN, [], 'd' * 100000 + '.cloudfront.net')
+
+    def test_acm_validation_labels_are_bounded(self):
+        for field, value in (
+            ('name', '_' + 'a' * 63 + '.' + DOMAIN),
+            ('value', '_' + 'a' * 63 + '.validation.acm-validations.aws'),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                dns.planned_records(DOMAIN, [{**VALIDATION, field: value}], None)
+
+    def test_valid_dns_label_boundaries_remain_supported(self):
+        domain = 'a' * 63 + '.com'
+        records = dns.planned_records(domain, [], 'd' + 'a' * 62 + '.cloudfront.net')
+        self.assertEqual(records[0]['record'], domain)
+
     def test_existing_matching_record_is_not_added_again(self):
         records = dns.planned_records(DOMAIN, [], 'd123.cloudfront.net')
         with patch.object(dns, 'api', return_value=[{**records[0], 'value': 'd123.cloudfront.net.'}]) as api:
