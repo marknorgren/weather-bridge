@@ -7,6 +7,49 @@ Weather Bridge keeps REST, CLI, MCP, and the browser on one shared Rust service.
 Use [Local development](development.md) for prerequisite checks, setup, server modes, and source watching.
 The [fixture guide](development-fixtures.md) defines the synthetic scenarios and provides REST/MCP examples.
 
+## Commit and merge policy
+
+Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for
+local commit subjects and PR titles. The format is `type(scope): description`;
+scope is optional, and `!` before the colon marks a breaking change. Allowed
+types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, and `chore`.
+Scopes use lowercase letters, digits, periods, underscores, slashes, or hyphens.
+
+```sh
+just check-commit 'fix(api): reject an unsafe input'
+```
+
+PRs merge with squash only. GitHub uses the PR title as the squash commit
+subject, and the required `conventional-commits` check validates that title on
+new pushes and title edits. That workflow also checks the resulting commit on
+pushes to `main`. The release workflow checks the actual commit subject, then
+runs `just check`, before building or deploying. Keep the final squash title
+conventional if you edit it at merge
+time. GitHub's native commit-metadata rules require an Enterprise organization
+and are not available in this personal repository.
+
+Main requires linear history, an up-to-date branch, passing CI, and resolved
+review conversations. A separate approval ruleset requires one approval from
+someone other than the last pusher. Repository administrators can bypass that
+approval rule through a PR after their own review. This PR-only exception
+keeps a review trail; the required CI and linear-history rules still
+apply. GitHub does not count an author's approval of their own PR.
+
+Review the final diff and check results, then select squash merge. If GitHub
+shows the approval override control, use it for the approval rule only. The
+GitHub API also respects this exception while enforcing the other rules:
+
+```sh
+gh api --method PUT repos/marknorgren/weather-bridge/pulls/NUMBER/merge -f merge_method=squash -f sha=REVIEWED_SHA
+```
+
+Replace `NUMBER` and `REVIEWED_SHA`, then run that command after checks pass.
+Keep the exact reviewed head to prevent merging a later push. Some GitHub CLI
+versions reject `gh pr merge` during
+their approval preflight even when the API permits a ruleset bypass.
+Merging to `main` starts the configured AWS demo release workflow. Approval
+exceptions do not grant an agent permission to deploy.
+
 ## Follow one operation end to end
 
 The hourly forecast is the smallest complete example of the shared-service design:

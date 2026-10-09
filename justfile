@@ -45,6 +45,10 @@ check-python:
     python3 -m unittest discover -s scripts -p 'test_*.py'
     python3 -m unittest discover -s infra/aws -p 'test_*.py'
 
+# Check a proposed local commit subject or squash PR title.
+check-commit subject:
+    python3 scripts/check_commit_subject.py --subject={{quote(subject)}}
+
 # Focused security regressions; these checks are also covered by just check.
 check-security:
     python3 -m unittest scripts.test_security

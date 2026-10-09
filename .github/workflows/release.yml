@@ -55,6 +55,7 @@ jobs:
           echo "$RUNNER_TEMP/weather-bridge-zig/bin" >> "$GITHUB_PATH"
       - name: Verify the exact source revision
         run: |
+          python3 scripts/check_commit_subject.py
           just check
           just check-msrv
           just audit

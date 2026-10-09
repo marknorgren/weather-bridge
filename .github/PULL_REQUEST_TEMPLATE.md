@@ -1,5 +1,7 @@
 Describe the problem, resulting behavior, and checks run.
 
+- [ ] The PR title is a Conventional Commit subject and I will use squash merge.
+
 - [ ] I reviewed changed security boundaries and their direct callers with the
   repository's `weather-bridge-code-review` skill where applicable.
 - [ ] Regression checks cover malicious inputs and legitimate controls.
