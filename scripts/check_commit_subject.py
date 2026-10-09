@@ -5,6 +5,7 @@ import argparse
 import re
 import subprocess
 import sys
+import unicodedata
 
 
 HEADER_PATTERN = (
@@ -15,7 +16,7 @@ HEADER_PATTERN = (
 
 def valid_subject(subject):
     return (
-        not any(ord(char) < 32 or ord(char) == 127 for char in subject)
+        not any(unicodedata.category(char) in {'Cc', 'Zl', 'Zp'} for char in subject)
         and re.fullmatch(HEADER_PATTERN, subject) is not None
     )
 

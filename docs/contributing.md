@@ -22,10 +22,10 @@ just check-commit 'fix(api): reject an unsafe input'
 PRs merge with squash only. GitHub uses the PR title as the squash commit
 subject, and the required `conventional-commits` check validates that title on
 new pushes and title edits. That workflow also checks the resulting commit on
-pushes to `main`. The release workflow checks the actual commit subject, then
-runs `just check`, before building or deploying. Keep the final squash title
-conventional if you edit it at merge
-time. GitHub's native commit-metadata rules require an Enterprise organization
+pushes to `main`. Release builds check the actual commit subject and run
+`just check` before packaging. Rollbacks skip the build steps and verify the
+selected prior artifact again. Keep the final squash title conventional if
+you edit it at merge time. GitHub's native commit-metadata rules require an Enterprise organization
 and are not available in this personal repository.
 
 Main requires linear history, an up-to-date branch, passing CI, and resolved

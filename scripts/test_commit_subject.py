@@ -23,6 +23,7 @@ class CommitSubjectTests(unittest.TestCase):
             'feat!: change the public contract',
             'fix(api/v1)!: reject an unsafe input',
             'docs: preserve Unicode café and 東京',
+            'feat: preserve emoji 👩‍💻 in descriptions',
         ):
             with self.subTest(subject=subject):
                 self.assertTrue(check_commit_subject.valid_subject(subject))
@@ -37,6 +38,10 @@ class CommitSubjectTests(unittest.TestCase):
             'fix: repair\nchore: forge another subject',
             'fix: repair\r', 'fix: repair\x1b[31m',
             'fix: repair\tinput', 'fix: repair\x7f',
+            'fix: repair\x85chore: another subject',
+            'fix: repair\x9b31m',
+            'fix: repair\u2028chore: another subject',
+            'fix: repair\u2029chore: another subject',
         ):
             with self.subTest(subject=repr(subject)):
                 self.assertFalse(check_commit_subject.valid_subject(subject))
