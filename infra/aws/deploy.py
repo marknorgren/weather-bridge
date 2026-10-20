@@ -9,6 +9,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +49,13 @@ def aws_region(value):
         raise argparse.ArgumentTypeError('Invalid AWS region: use a region name such as us-east-1')
     return value
 
+
+def owner_email(value):
+    if value and (len(value) > 254 or not re.fullmatch(
+            r'[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,63}', value)):
+        raise argparse.ArgumentTypeError('Invalid owner email address')
+    return value
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--profile', type=aws_profile,
                     help='AWS CLI profile; omit to use the standard credential chain (for example OIDC)')
@@ -63,6 +71,8 @@ parser.add_argument('--cloudfront-plan', choices=['PAY_AS_YOU_GO', 'FREE'],
                     help='CloudFront pricing: preserve the existing plan (PAY_AS_YOU_GO for a new demo), or the $0 '
                          'flat-rate Free plan. Check eligibility first; see infra/aws/README.md.')
 parser.add_argument('--domain', help='Optional custom hostname; omitted preserves the existing hostname')
+parser.add_argument('--owner-email', type=owner_email,
+                    help='Optional owner notification email; omitted preserves the existing address, empty removes it')
 parser.add_argument('--prepare-domain', action='store_true',
                     help='Request the Terraform-managed certificate and print DNS records without pausing the demo')
 args = parser.parse_args()
@@ -153,6 +163,9 @@ def public_origin(url):
 parameters = {'profile': args.profile, 'region': args.region, 'nws_contact': args.contact, 'public_origin': '',
               'origin_host': '', 'origin_verify_secret': origin_verify_secret(),
               'reserved_concurrency': args.concurrency, 'cloudfront_pricing_plan': args.cloudfront_plan or 'PAY_AS_YOU_GO'}
+previous_email = next((p['ParameterValue'] for p in existing.get('weather-bridge-demo', {}).get('Parameters', [])
+                       if p['ParameterKey'] == 'OwnerNotificationEmail'), '')
+parameters['owner_notification_email'] = previous_email if args.owner_email is None else args.owner_email
 if 'weather-bridge-demo' in existing:
     outputs = {o['OutputKey']: o['OutputValue'] for o in existing['weather-bridge-demo'].get('Outputs', [])}
     parameters['public_origin'] = public_origin(outputs['Endpoint'])
@@ -234,8 +247,9 @@ if parameters['custom_domain']:
     write_settings()
 
 if 'weather-bridge-demo' in existing:
-    aws('lambda', 'put-function-concurrency', '--function-name', 'weather-bridge-demo',
-        '--reserved-concurrent-executions', '0')
+    # Record a deliberate stop before changing resources. A scheduled check must
+    # never interpret deployment downtime as a recoverable monitoring pause.
+    invoke('stop')
 apply()
 endpoint = output('endpoint')
 discovered = {'public_origin': public_origin(endpoint), 'origin_host': urlparse(output('function_url')).hostname}
@@ -257,6 +271,13 @@ state = {'profile': args.profile, 'region': args.region, 'endpoint': endpoint,
          'stack': 'weather-bridge-demo', 'artifactStack': 'weather-bridge-artifacts',
          'demoFunction': 'weather-bridge-demo', 'guardFunction': 'weather-bridge-usage-guard'}
 (state_dir / 'state.json').write_text(json.dumps(state, indent=2) + '\n')
-if invoke('resume')['stopped']:
-    raise RuntimeError('The account exceeds configured usage thresholds. The demo remains stopped.')
+for attempt in range(13):
+    resumed = invoke('resume')
+    if not resumed['stopped']:
+        break
+    # New/replaced alarms need complete OK evidence. Wait outside the Lambda;
+    # a budget, usage, or unknown stop is never retried automatically here.
+    if resumed.get('reason') != 'control_alarm' or attempt == 12:
+        raise RuntimeError('The usage guard refused resume: ' + str(resumed.get('reason', 'unknown')))
+    time.sleep(30)
 print('Weather Bridge endpoint: ' + endpoint, flush=True)

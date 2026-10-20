@@ -10,7 +10,7 @@ Use the [deployment driver](../deploy.py) and [operations guide](../README.md). 
 4. Imports existing Weather Bridge stacks when adopting an existing deployment.
 5. Saves a Terraform plan, verifies its resource addresses, and applies that exact plan.
 6. Configures the generated CloudFront origin and Function URL host on a second apply when they change.
-7. Invalidates the CloudFront cache, then calls the guard to resume only after current account usage passes its checks.
+7. Invalidates the CloudFront cache, then calls the guard to resume only after usage, budget, and control-alarm checks pass. It allows at most twelve 30-second waits for alarm initialization.
 
 Build and package the release with `scripts/release.py` before planning; the binary embeds the city data. Scalar is used only by the separate Pages build. Build artifacts stay under ignored `target/`. Every plan shows the origin-verification parameter as changed; see [Known plan difference](../README.md#known-plan-difference). The guard checks usage before enabling the demo.
 
@@ -24,6 +24,7 @@ Artifact objects are content-addressed and replaced create-before-destroy. Terra
 | `public_origin` | CloudFront HTTPS origin (from `endpoint`). Empty only during disabled bootstrap. |
 | `origin_host` | Function URL host (from `function_url`); the MCP Host allowlist includes it because CloudFront sends the origin's Host to Lambda. |
 | `origin_verify_secret` | Sensitive. Value CloudFront sends as `X-Weather-Bridge-Origin-Verify`. |
+| `owner_notification_email` | Optional private email address. Confirm the SNS subscription. The driver preserves the deployed address when omitted. |
 | `reserved_concurrency` | 1–10, default 3. Concurrency the guard restores on resume. |
 | `custom_domain` | Optional public hostname. Terraform requests its ACM certificate in us-east-1; retain the DNS validation records for renewal. See the [staged custom-domain setup](../README.md#custom-hostname-with-external-dns). |
 | `cloudfront_pricing_plan` | `PAY_AS_YOU_GO` (default) or `FREE`. `FREE` requires region us-east-1. |
@@ -48,3 +49,5 @@ Commit `.tf` files, the provider lock file `.terraform.lock.hcl`, placeholder ex
 State defaults to local storage. Back it up privately. Shared/team deployment should configure an encrypted remote backend with locking; do not use the artifact bucket for state. Contact information, the origin-verification value, and deployment/account identifiers can appear in state and plans even though examples remain generic.
 
 Destroying the module removes the demo and its controls. Stop the app first. The artifact bucket must be empty before its stack can be removed; do not bypass this by deleting unrelated account resources. Check Terraform and CloudFormation cleanup results.
+
+The usage guard owns one mutable object, `guard-state/state.json`, in the private artifact bucket. Terraform owns release artifacts, not this runtime record. The guard records deployment as a manual stop before stack updates. See the [recovery policy](../README.md#recovery-policy).

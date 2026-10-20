@@ -95,6 +95,84 @@ class ReleaseVerificationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def run_deployment(self, resume_results, extra_args=(), previous_email=''):
+        driver = self.directory / 'infra/aws/deploy.py'
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        (driver.parent / 'terraform').mkdir(exist_ok=True)
+        driver.write_bytes((ROOT / 'infra/aws/deploy.py').read_bytes())
+        calls = []
+        actions = []
+        outputs = {'endpoint': 'https://example.cloudfront.net/',
+                   'function_url': 'https://origin.lambda-url.us-east-1.on.aws/',
+                   'distribution_id': 'EEXAMPLE', 'distribution_endpoint': 'https://example.cloudfront.net/'}
+        results = iter(resume_results)
+        def execute(command, **_kwargs):
+            calls.append(command)
+            value = {}
+            if command[0] == 'aws':
+                if command[1:3] == ['cloudformation', 'describe-stacks']:
+                    stack = command[command.index('--stack-name') + 1]
+                    if stack.endswith('artifacts'):
+                        value = {'Stacks': [{'StackId': stack, 'Outputs': [{'OutputKey': 'Bucket', 'OutputValue': 'private-bucket'}]}]}
+                    else:
+                        value = {'Stacks': [{'StackId': stack, 'Outputs': [
+                            {'OutputKey': 'Endpoint', 'OutputValue': outputs['endpoint']},
+                            {'OutputKey': 'FunctionUrl', 'OutputValue': outputs['function_url']},
+                            {'OutputKey': 'DistributionId', 'OutputValue': 'EEXAMPLE'}],
+                            'Parameters': [{'ParameterKey': 'OwnerNotificationEmail', 'ParameterValue': previous_email}]}]}
+                elif command[1:3] == ['lambda', 'invoke']:
+                    index = command.index('--payload')
+                    action = json.loads(command[index + 1])['action']
+                    actions.append(action)
+                    response = {'stopped': True} if action == 'stop' else next(results)
+                    Path(command[index + 2]).write_text(json.dumps(response))
+            elif command[0] == 'terraform':
+                if command[2] == 'show':
+                    value = {'resource_changes': []}
+                elif command[2] == 'output':
+                    value = outputs[command[-1]]
+            else:
+                self.fail('unexpected subprocess: ' + str(command))
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(value))
+        args = [str(driver), '--contact', 'test@example.com', '--release', str(self.directory),
+                '--revision', REVISION, *extra_args]
+        with mock.patch.dict(sys.modules, {'release': release}), mock.patch.object(sys, 'argv', args), mock.patch(
+                'subprocess.run', side_effect=execute), mock.patch('time.sleep') as sleep:
+            runpy.run_path(str(driver), run_name='__main__')
+        settings = (driver.parent / 'terraform/deployment.auto.tfvars').read_text()
+        return actions, calls, sleep.call_args_list, settings
+
+    def test_deployment_records_stop_before_updates_and_waits_only_for_alarm_initialization(self):
+        actions, calls, sleeps, _ = self.run_deployment([
+            {'stopped': True, 'reason': 'control_alarm'}, {'stopped': False}], [])
+        self.assertEqual(actions, ['stop', 'resume', 'resume'])
+        stop_index = next(i for i, call in enumerate(calls) if call[:3] == ['aws', 'lambda', 'invoke'])
+        apply_index = next(i for i, call in enumerate(calls) if call[:1] == ['terraform'] and call[2] == 'apply')
+        self.assertLess(stop_index, apply_index)
+        self.assertEqual(sleeps, [mock.call(30)])
+
+    def test_owner_email_is_preserved_unless_explicitly_replaced_or_removed(self):
+        for args, expected in [([], 'previous@example.com'),
+                               (['--owner-email', 'new@example.com'], 'new@example.com'),
+                               (['--owner-email='], '')]:
+            with self.subTest(args=args):
+                _, _, _, settings = self.run_deployment([{'stopped': False}], args, 'previous@example.com')
+                self.assertIn('owner_notification_email = ' + json.dumps(expected), settings)
+
+    def test_deployment_does_not_retry_a_budget_stop(self):
+        with self.assertRaisesRegex(RuntimeError, 'budget_limit'):
+            self.run_deployment([{'stopped': True, 'reason': 'budget_limit'}])
+
+    def test_invalid_owner_email_fails_before_any_external_command(self):
+        for email in ('a\nb@example.com', '--bad@example.com', '${file("secret")}@example.com', 'a@b', 'a' * 255):
+            with self.subTest(email=email), mock.patch.object(sys, 'argv', [
+                    str(ROOT / 'infra/aws/deploy.py'), '--contact', 'test@example.com',
+                    '--release', str(self.directory), '--revision', REVISION, '--owner-email=' + email]), mock.patch(
+                    'subprocess.run') as run, mock.patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    runpy.run_path(str(ROOT / 'infra/aws/deploy.py'), run_name='__main__')
+                run.assert_not_called()
+
     def test_rejects_missing_manifest(self):
         (self.directory / 'release-manifest.json').unlink()
         with self.assertRaisesRegex(release.ReleaseError, 'manifest is missing'):

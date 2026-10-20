@@ -57,6 +57,13 @@
       "Type": "String",
       "Default": "",
       "Description": "ISSUED us-east-1 ACM certificate ARN for CustomDomain. Leave empty when no custom domain is configured."
+    },
+    "OwnerNotificationEmail": {
+      "Type": "String",
+      "Default": "",
+      "MaxLength": 254,
+      "AllowedPattern": "^$|^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z]{2,63}$",
+      "Description": "Optional private owner email for shutdown/recovery notices. Confirm the SNS subscription before relying on delivery."
     }
   },
   "Resources": {
@@ -229,6 +236,62 @@
                       "Ref": "AWS::NoValue"
                     }
                   ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:Publish"
+                  ],
+                  "Resource": {
+                    "Ref": "OwnerTopic"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:DescribeAlarms"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:weather-bridge-guard-error"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:weather-bridge-schedule-failure"
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "budgets:ViewBudget"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/weather-bridge-lambda-backstop"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${ArtifactBucket}/guard-state/state.json"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:s3:::${ArtifactBucket}"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "s3:prefix": "guard-state/state.json"
+                    }
+                  }
                 }
               ]
             }
@@ -383,7 +446,25 @@
               "Ref": "Distribution"
             },
             "CLOUDFRONT_REQUEST_LIMIT": "8000000",
-            "CLOUDFRONT_BYTES_LIMIT": "800000000000"
+            "CLOUDFRONT_BYTES_LIMIT": "800000000000",
+            "STOP_TOPIC_ARN": {
+              "Ref": "GuardTopic"
+            },
+            "OWNER_TOPIC_ARN": {
+              "Ref": "OwnerTopic"
+            },
+            "SCHEDULE_ARN": {
+              "Fn::Sub": "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/weather-bridge-usage-check"
+            },
+            "ACCOUNT_ID": {
+              "Ref": "AWS::AccountId"
+            },
+            "PARTITION": {
+              "Ref": "AWS::Partition"
+            },
+            "STATE_BUCKET": {
+              "Ref": "ArtifactBucket"
+            }
           }
         },
         "Tags": [
@@ -423,10 +504,10 @@
                 "GuardFunction",
                 "Arn"
               ]
-            },
-            "Input": "{\"action\":\"check\"}"
+            }
           }
-        ]
+        ],
+        "Name": "weather-bridge-usage-check"
       }
     },
     "GuardSchedulePermission": {
@@ -578,8 +659,12 @@
         "AlarmActions": [
           {
             "Ref": "GuardTopic"
+          },
+          {
+            "Ref": "OwnerTopic"
           }
-        ]
+        ],
+        "AlarmName": "weather-bridge-guard-error"
       }
     },
     "ScheduleFailureAlarm": {
@@ -605,8 +690,12 @@
         "AlarmActions": [
           {
             "Ref": "GuardTopic"
+          },
+          {
+            "Ref": "OwnerTopic"
           }
-        ]
+        ],
+        "AlarmName": "weather-bridge-schedule-failure"
       }
     },
     "AppLogErrorsAlarm": {
@@ -929,6 +1018,67 @@
           }
         ]
       }
+    },
+    "OwnerTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "weather-bridge-owner-events"
+      }
+    },
+    "OwnerEmail": {
+      "Type": "AWS::SNS::Subscription",
+      "Condition": "HasOwnerEmail",
+      "Properties": {
+        "Protocol": "email",
+        "Endpoint": {
+          "Ref": "OwnerNotificationEmail"
+        },
+        "TopicArn": {
+          "Ref": "OwnerTopic"
+        }
+      }
+    },
+    "OwnerTopicPolicy": {
+      "Type": "AWS::SNS::TopicPolicy",
+      "Properties": {
+        "Topics": [
+          {
+            "Ref": "OwnerTopic"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": "sns:Publish",
+              "Resource": {
+                "Ref": "OwnerTopic"
+              },
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnEquals": {
+                  "aws:SourceArn": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:weather-bridge-guard-error"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:weather-bridge-schedule-failure"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   },
   "Outputs": {
@@ -975,6 +1125,16 @@
       "Value": {
         "Fn::Sub": "https://${Distribution.DomainName}/"
       }
+    },
+    "OwnerNotificationTopic": {
+      "Value": {
+        "Ref": "OwnerTopic"
+      }
+    },
+    "GuardStateObject": {
+      "Value": {
+        "Fn::Sub": "s3://${ArtifactBucket}/guard-state/state.json"
+      }
     }
   },
   "Conditions": {
@@ -999,6 +1159,18 @@
           "Fn::Equals": [
             {
               "Ref": "CustomDomain"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasOwnerEmail": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "OwnerNotificationEmail"
             },
             ""
           ]

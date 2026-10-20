@@ -83,7 +83,7 @@ Bootstrap the deployment separately from the workflow:
    restriction.
 4. Configure these non-secret `weather-demo` environment variables: `AWS_ROLE_ARN`,
    `AWS_ACCOUNT_ID`, `AWS_REGION` (normally `us-east-1`), and `NWS_CONTACT`.
-   Optional variables are `RESERVED_CONCURRENCY` (1-10), `CLOUDFRONT_PLAN`
+   Optional variables are `OWNER_NOTIFICATION_EMAIL` (private owner email; confirm its SNS subscription), `RESERVED_CONCURRENCY` (1-10), `CLOUDFRONT_PLAN`
    (`PAY_AS_YOU_GO` or `FREE`), and `CUSTOM_DOMAIN`.
 5. Run the workflow once with deployment disabled and inspect its checks and
    uploaded manifest. Create the repository Actions variable
@@ -186,9 +186,9 @@ Every five minutes, an EventBridge rule invokes `weather-bridge-usage-guard`. Fo
 
 - **Lambda**, all functions in the account's enabled regions: stop at **800,000 requests** (80% of the 1,000,000 free requests) or **320,000 estimated GB-seconds** (80% of the 400,000 free GB-seconds).
 - **CloudFront**, all distributions in the account (CloudFront's free tier is account-wide): stop at **8,000,000 requests** (80% of 10,000,000) or **800 GB** downloaded (80% of 1 TB).
-- Stop if any usage query fails. Monitor errors and failed scheduler delivery also signal a shutdown through CloudWatch/SNS.
+- Stop immediately if any usage query fails. A recognized temporary AWS read error creates a recoverable monitoring pause. Permission errors, unexpected guard failures, and failed scheduler delivery create a locked stop through CloudWatch/SNS.
 
-A stop sets `weather-bridge-demo` reserved concurrency to 0 first, then disables this stack's CloudFront distribution. A disabled distribution serves no requests. The guard can change only that function's concurrency and only that distribution. It cannot stop other functions or distributions. Normal checks never restart a stopped demo. The usage calculation includes the guard itself and existing resources.
+A stop sets `weather-bridge-demo` reserved concurrency to 0 first, then disables this stack's CloudFront distribution. A disabled distribution serves no requests. The guard can change only that function's concurrency and only that distribution. It cannot stop other functions or distributions. Only a recorded monitoring pause can recover automatically. Manual, budget, usage-limit, permission, unexpected-error, and unknown stops require explicit operator resume. The usage calculation includes the guard itself and existing resources.
 
 ### Compute estimate
 
@@ -207,7 +207,7 @@ CloudWatch data can arrive late, and historical memory changes can affect the es
 
 ### Budget backstop
 
-A **$1/month cost budget for AWS Lambda and Amazon CloudFront** sends an SNS shutdown signal when actual reported charges for those services exceed **1% ($0.01)**. The budget keeps its original name, `weather-bridge-lambda-backstop`. It covers the whole account for those services, not only the demo, but its action stops only the demo. This is a delayed billing backstop, so charges may already have accrued. S3 is not included: artifact storage is a fraction of a cent, and account-wide S3 charges from unrelated buckets would stop the demo permanently. The existing account budget remains unchanged. SNS has no email subscribers; signals invoke the guard directly. Alarm status and logs are visible in the AWS console.
+A **$1/month cost budget for AWS Lambda and Amazon CloudFront** sends an SNS shutdown signal when actual reported charges for those services exceed **1% ($0.01)**. The budget keeps its original name, `weather-bridge-lambda-backstop`. It covers the whole account for those services, not only the demo, but its action stops only the demo. This is a delayed billing backstop, so charges may already have accrued. S3 is not included: artifact storage is a fraction of a cent, and account-wide S3 charges from unrelated buckets would stop the demo permanently. The existing account budget remains unchanged. Shutdown signals invoke the guard directly. A separate owner topic can deliver shutdown, recovery, and failure notices by email. Set `--owner-email address@example.com` in `deploy.py`, or `OWNER_NOTIFICATION_EMAIL` in the GitHub deployment environment, and confirm the SNS subscription. Omission preserves the deployed address; `--owner-email=` removes it. An empty address leaves email delivery unconfigured. The owner topic never invokes the guard, so notifications cannot cause a shutdown loop. Alarm status and logs remain available in the AWS console.
 
 ### Concurrency constraint
 
@@ -250,6 +250,51 @@ CloudFront offers flat-rate plans with no overage charges, including a **$0 Free
 
 The rate limit applies only to traffic through CloudFront. Direct Function URL requests skip it. The origin header check rejects them cheaply, but they still count as Lambda invocations.
 
+## Recovery policy
+
+The guard stores its stop reason and recovery evidence in the private artifact
+bucket at `guard-state/state.json`. Its role can read and write only that object
+and list only that exact prefix. S3 provides [strong read-after-write
+consistency](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html).
+The guard has one execution slot, so all stop and resume actions use one writer.
+Do not edit this object or change service state outside the guard during normal
+operation. A manual stop must use the guard stop action to record its intent.
+
+| Mode | Meaning | Recovery |
+| --- | --- | --- |
+| `running` | Guard-confirmed configured concurrency and enabled distribution | Continue account-wide checks. |
+| `paused` | A recognized temporary usage-read error stopped both services | Two consecutive full scheduled checks below every limit, then verify the budget and both control alarms before resume. |
+| `locked` | Manual, budget, usage-limit, permission, unexpected-error, unknown, or interrupted-resume stop | Explicit operator resume after the cause is resolved. |
+
+The five-minute schedule supplies its native event identity and timestamp.
+Duplicate, early, expired, foreign, manual, and `status` requests cannot advance
+recovery. A missing scheduled check or another read failure resets the count.
+The guard rejects partial account-wide results. Alarm state must be `OK`, and
+reported actual budget spend must not exceed the configured budget notification
+threshold. Billing and metrics can lag; this remains a protective estimate.
+
+A stop records its reason before changing services. Resume first records a
+locked intent, then restores concurrency and enables CloudFront. A crash or
+failed verification cannot retain automatic recovery authority. Missing,
+malformed, unreadable, or oversized state cannot authorize automatic resume.
+An explicit resume can initialize missing or malformed state after all checks
+pass. A manual stop can replace missing or malformed state with locked intent.
+Denied state reads or writes remain errors.
+
+Budget and control-alarm messages from the configured shutdown topic stay
+locked. The record retains the last 16 SNS message IDs across resume, so recent
+duplicate deliveries are ignored. Older or unrecognized signals stop the demo
+conservatively. An expected temporary read failure is reported as a handled
+pause, rather than a Lambda crash that would trigger the control-failure stop.
+Unexpected errors and scheduler failures retain their CloudWatch/SNS backstop.
+Failure logs include service, region, operation, AWS code, and request ID.
+Notification publish failures are logged without changing cost-control state.
+
+Deployment records a manual stop before applying infrastructure. Its final
+explicit resume allows up to twelve 30-second waits for new control alarms to report `OK`.
+A budget or usage-limit stop fails immediately. The runtime state object is not
+a Terraform artifact and must not be deleted during release cleanup.
+
 ## Stop, inspect, and resume
 
 Replace `your-profile` in these commands. They act on the demo's guard only:
@@ -262,13 +307,23 @@ aws lambda invoke --function-name weather-bridge-usage-guard --profile your-prof
 
 Read the output file and check the CLI response for `FunctionError`.
 
-- `status` reports Lambda and CloudFront usage, cold-start evidence (`demoColdStarts`), and `distributionEnabled`.
+- `status` reports Lambda and CloudFront usage, cold-start evidence (`demoColdStarts`), `distributionEnabled`, `mode`, the recorded stop `reason`, and `recoveryChecks`. It never advances automatic recovery.
 - `status` can also stop the demo: it sets reserved concurrency to zero and disables the distribution if any usage threshold is reached, or if usage collection or a subsequent configuration read fails. It never resumes a stopped demo. Run it only when that shutdown behavior is intended.
 - For read-only evidence, inspect recent `/aws/lambda/weather-bridge-usage-guard` CloudWatch log results, the guard's scheduler and alarms, the demo's reserved concurrency, and the distribution's enabled state. Check the current Lambda and CloudFront metrics and pricing-plan subscription separately; a previous successful log result does not establish current usage or configuration.
 - `resume` works only when usage is below every threshold. It restores the configured concurrency and re-enables the distribution, which takes a few minutes to propagate.
-- A new month does not resume the demo by itself. Find out why it stopped first.
+- A new month does not clear a locked stop. Find out why it stopped first. Only a recorded temporary monitoring pause can recover through the schedule.
 
-For an emergency stop without the guard, run `aws lambda put-function-concurrency --function-name weather-bridge-demo --reserved-concurrent-executions 0` with the same profile and region, or disable the distribution in the CloudFront console.
+For a normal manual stop, use the guard stop command above. Direct concurrency
+or CloudFront changes do not record stop intent. If a monitoring pause already
+has concurrency zero and CloudFront disabled, an identical direct stop cannot
+be distinguished from that pause and can be reversed by recovery.
+
+If the guard cannot process an emergency stop, first prevent further guard
+invocations, then allow any in-flight invocation to finish before directly
+stopping the app and distribution. Keep the guard disabled until its state
+records a locked stop. Do not restore its schedule or execution capacity with a
+recoverable pause still recorded. This emergency procedure changes guard
+configuration and requires operator control; it is not part of ordinary resume.
 
 CloudFormation declares the app's concurrency as zero and the distribution as enabled. The guard's changes are expected drift from that. A stack update may reset them, so every deployment ends with a guarded resume.
 
@@ -282,7 +337,7 @@ Before sharing the public endpoint, test these through the CloudFront URL:
 
 ## Remove
 
-Stop the demo and delete the `weather-bridge-demo` stack. CloudFormation disables and then deletes the distribution, which can take several minutes. On the Free plan, it removes the subscription first. Remove artifact objects before deleting `weather-bridge-artifacts`; its bucket cannot be deleted while nonempty. Check the stack events for cleanup failures. Removing these stacks removes their functions, distribution, cache policy, metric filter, rules, alarms, SNS topic, budget, roles, and logs. It does not remove existing account resources.
+Stop the demo and delete the `weather-bridge-demo` stack. CloudFormation disables and then deletes the distribution, which can take several minutes. On the Free plan, it removes the subscription first. Remove artifact objects and the runtime `guard-state/state.json` object before deleting `weather-bridge-artifacts`; its bucket cannot be deleted while nonempty. Check the stack events for cleanup failures. Removing these stacks removes their functions, distribution, cache policy, metric filter, rules, alarms, SNS topic, budget, roles, and logs. It does not remove existing account resources.
 
 ## Custom hostname with external DNS
 
@@ -324,3 +379,5 @@ Then:
 3. Update the docs' API URL only after HTTPS and MCP work on the new hostname.
 
 Later driver runs keep the deployed hostname and pricing plan if you leave out `--domain` or `--cloudfront-plan`. The driver handles a first hostname and redeploys of the same hostname. Moving to a different hostname needs a separate, staged certificate migration; the driver rejects that change before touching the demo.
+
+The recovery policy is specified in [ADR-0009](../../adrs/adr-0009-guard-recovery.md). Local regression tests prove transitions with fake AWS boundaries. They do not establish deployed IAM, SNS subscription confirmation, CloudFront propagation, or live recovery acceptance.

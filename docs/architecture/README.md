@@ -8,7 +8,7 @@ The model follows the code rather than defining a second contract:
 - [src/weather.rs](../../src/weather.rs) coordinates location resolution and source fetches. [src/weather/nws.rs](../../src/weather/nws.rs) owns the fixed upstream origin, caches, limits, and validation.
 - [src/model.rs](../../src/model.rs) owns shared REST, CLI, and MCP response types. [src/weather/normalize.rs](../../src/weather/normalize.rs) maps NWS documents into those types.
 - [src/diagnostics.rs](../../src/diagnostics.rs) owns fixed diagnostic labels and process-local metrics.
-- [infra/aws/README.md](../../infra/aws/README.md) owns deployment behavior and safeguards.
+- [infra/aws/README.md](../../infra/aws/README.md) owns deployment behavior and safeguards. The guard records stop ownership in one private S3 object. Only temporary monitoring pauses can recover after two full scheduled checks; budget, manual, and unknown stops require explicit resume.
 
 ## Where MCP sits
 

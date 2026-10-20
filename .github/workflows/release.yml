@@ -196,6 +196,7 @@ jobs:
           RESERVED_CONCURRENCY: ${{ vars.RESERVED_CONCURRENCY }}
           CLOUDFRONT_PLAN: ${{ vars.CLOUDFRONT_PLAN }}
           CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          OWNER_NOTIFICATION_EMAIL: ${{ vars.OWNER_NOTIFICATION_EMAIL }}
         run: |
           deploy=(python3 infra/aws/deploy.py
             --region "$DEPLOY_REGION"
@@ -205,4 +206,5 @@ jobs:
           if [ -n "$RESERVED_CONCURRENCY" ]; then deploy+=(--concurrency "$RESERVED_CONCURRENCY"); fi
           if [ -n "$CLOUDFRONT_PLAN" ]; then deploy+=(--cloudfront-plan "$CLOUDFRONT_PLAN"); fi
           if [ -n "$CUSTOM_DOMAIN" ]; then deploy+=(--domain "$CUSTOM_DOMAIN"); fi
+          if [ -n "$OWNER_NOTIFICATION_EMAIL" ]; then deploy+=(--owner-email "$OWNER_NOTIFICATION_EMAIL"); fi
           "${deploy[@]}"
