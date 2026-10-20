@@ -89,3 +89,67 @@ Use the existing Python runtime and boto3 in Lambda. Use the existing private ar
 ## Revision Note
 
 2026-10-20, Codex: Initial execution contract after approved recovery proposal. Implementation, review, local validation and handoff completed; the commit contains this final evidence. No live state changed.
+
+## Independent Claude review and remediation
+
+2026-10-20: The user requested a Claude review and fixes. Claude Code used the
+existing subscription login with only Read, Glob, and Grep tools, no session
+persistence, and no AWS or write tools. The returned model identifier was
+`claude-opus-5-5`. No high or critical finding was reported. Codex validated the
+findings against callers and added failing regressions before the main repairs.
+
+- Deployment now records `deployment_stop` only from consistent running or
+  paused state. It preserves previous locks and new SNS stop signals. A
+  constrained deployment resume can clear only its own stop. `--resume-stopped`
+  and a manual workflow input explicitly authorize operator recovery subject to
+  every guard check. New and legacy unknown state stay stopped by default.
+- Proven absent state initializes `locked/unknown_state` without a Lambda error,
+  avoiding a rollout error alarm race. Malformed or denied state remains an error.
+- Usage-read classification now includes HTTP 5xx/429 and additional documented
+  service fault codes. Broad automatic recovery of S3 state/control failures was
+  rejected: unreadable state cannot establish stop ownership, and failed control
+  changes cannot establish the intended service configuration. Interrupted pauses
+  remain locked for the same reason. These are deliberate availability limits.
+- The driver retries invocation throttling up to six attempts with 30-second
+  waits, disables hidden SDK invocation retries, and uses a 150-second CLI read
+  timeout above the guard's 120-second timeout. Non-throttle errors are not replayed.
+- Missing calculated budget spend returns `budget_unknown`, with no resume.
+  AWS documents [CalculatedSpend as optional](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_budgets_Budget.html).
+  Malformed returned amounts still fail closed.
+- Direct owner notices are deduplicated by persisted failure state. Unreadable
+  or unpersisted state relies on the separate owner CloudWatch alarm, avoiding
+  an email on every failing invocation.
+- Owner email uses a GitHub environment secret, Terraform sensitivity, and
+  CloudFormation NoEcho. A non-sensitive boolean output distinguishes disabled
+  delivery from a masked configured address. A missing secret cannot silently
+  remove an existing subscription. CLI callers must supply a masked address again
+  or explicitly disable delivery. Local tfvars are owner-only; Terraform state
+  still needs private storage.
+
+Claude's follow-up reviewed the current files and identified three remaining
+edge cases. A unique deployment run ID is now persisted and checked by both
+stop calls and constrained resume, so rollback to an old guard cannot leave
+reusable recovery authority. The driver also requires both stop results to grant
+resume, including during legacy migrations. Revoked deployment authority fails
+immediately rather than waiting for alarms. A manual workflow input explicitly
+disables owner delivery, and preflight explains migration from a public environment
+variable to a secret without printing the address. Failing regression checks
+confirmed stale deployment ownership and a legacy first-stop response could
+previously authorize resume. These are repaired in the final implementation.
+
+The first Claude invocation inside the sandbox could not access its credential
+store. Read-only host authentication status confirmed an existing login; no new
+login or credential setup was needed. Live read-only AWS checks reconfirmed a
+disabled deployed distribution and application concurrency zero. No deployment,
+resume, external notification, push, PR, or merge occurred.
+
+Final remediation evidence on 2026-10-20: `just check-security` passed, then
+`just check` passed with 146 Rust tests, 29 frontend tests, 32 tooling tests,
+122 infrastructure tests and offline HTTP/MCP/CLI smoke. Both ran with the
+required loopback permission. CloudFormation validation-only API, Terraform
+formatting, workflow YAML parsing, Conventional Commit subject validation and
+diff whitespace checks passed. No source dependency changed. Claude's two passes
+were read-only; Codex made the repairs and reviewed the final diff. Deployed IAM,
+subscription delivery, alarm timing and live recovery remain unverified. Remote
+CI and CodeQL remain unavailable evidence; no scanner closure is claimed. The
+managed Git SSH proxy still blocks fetch/push, so this is a local handoff.

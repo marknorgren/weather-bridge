@@ -60,6 +60,7 @@
     },
     "OwnerNotificationEmail": {
       "Type": "String",
+      "NoEcho": true,
       "Default": "",
       "MaxLength": 254,
       "AllowedPattern": "^$|^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z]{2,63}$",
@@ -1129,6 +1130,11 @@
     "OwnerNotificationTopic": {
       "Value": {
         "Ref": "OwnerTopic"
+      }
+    },
+    "OwnerNotificationConfigured": {
+      "Value": {
+        "Fn::If": ["HasOwnerEmail", "true", "false"]
       }
     },
     "GuardStateObject": {

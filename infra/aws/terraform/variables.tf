@@ -6,6 +6,7 @@ variable "profile" {
 
 variable "owner_notification_email" {
   type        = string
+  sensitive   = true
   default     = ""
   description = "Optional private owner email for shutdown and recovery notices. Confirm the SNS subscription after deployment."
   validation {

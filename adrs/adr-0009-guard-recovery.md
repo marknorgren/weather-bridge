@@ -45,8 +45,16 @@ ownership and reduced every SNS message to the same stop action.
 - Publish notices on a separate owner topic. An optional operator-selected
   email subscription requires confirmation. Notification failures are logged;
   they do not alter cost-control state.
-- Record a manual stop before deployment. Allow the deployment driver to use
-  at most twelve 30-second waits for control-alarm initialization, then fail closed.
+- Record `deployment_stop` before deployment only when the prior state and
+  services agree. Preserve earlier locks and new shutdown signals. A deployment
+  resume can clear only its own stop, with the same unique run ID at both stop
+  checks and resume. Interrupted earlier releases cannot supply authority. `--resume-stopped` explicitly authorizes
+  operator recovery of another stop, subject to all safety checks. Allow at most
+  twelve 30-second waits for control-alarm initialization, then fail closed.
+- Initialize proven absent state as locked without an error alarm. Unreadable,
+  malformed, and interrupted state or control changes remain locked. Usage-read
+  5xx and 429 responses can pause; broad recovery of state/control failures is
+  excluded because it would lack verified stop ownership.
 
 ## Alternatives considered
 

@@ -54,6 +54,15 @@ class GuardInfrastructureTests(unittest.TestCase):
                 self.assertNotEqual(resource['Properties']['TopicArn'], {'Ref': 'OwnerTopic'})
         self.assertEqual(TEMPLATE['Parameters']['OwnerNotificationEmail']['Default'], '')
 
+    def test_owner_address_is_masked_in_stack_and_plan_output(self):
+        self.assertTrue(TEMPLATE['Parameters']['OwnerNotificationEmail']['NoEcho'])
+        root = Path(__file__).resolve().parents[2]
+        variables = (root / 'infra/aws/terraform/variables.tf').read_text()
+        email = variables.split('variable "owner_notification_email" {')[1].split('variable "region"')[0]
+        self.assertRegex(email, r'sensitive\s*=\s*true')
+        workflow = (root / '.github/workflows/release.yml').read_text()
+        self.assertIn('secrets.OWNER_NOTIFICATION_EMAIL', workflow)
+
     def test_alarm_names_match_runtime_checks_and_preserve_shutdown_backstop(self):
         for logical, name in [('GuardErrorAlarm', 'weather-bridge-guard-error'),
                               ('ScheduleFailureAlarm', 'weather-bridge-schedule-failure')]:

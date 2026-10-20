@@ -95,7 +95,8 @@ class ReleaseVerificationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_deployment(self, resume_results, extra_args=(), previous_email=''):
+    def run_deployment(self, resume_results, extra_args=(), previous_email='', stop_result=None, throttles=0,
+                       owner_configured='true', stop_results=None):
         driver = self.directory / 'infra/aws/deploy.py'
         driver.parent.mkdir(parents=True, exist_ok=True)
         (driver.parent / 'terraform').mkdir(exist_ok=True)
@@ -106,7 +107,10 @@ class ReleaseVerificationTests(unittest.TestCase):
                    'function_url': 'https://origin.lambda-url.us-east-1.on.aws/',
                    'distribution_id': 'EEXAMPLE', 'distribution_endpoint': 'https://example.cloudfront.net/'}
         results = iter(resume_results)
+        stops = iter(stop_results) if stop_results is not None else None
+        remaining_throttles = throttles
         def execute(command, **_kwargs):
+            nonlocal remaining_throttles
             calls.append(command)
             value = {}
             if command[0] == 'aws':
@@ -118,13 +122,21 @@ class ReleaseVerificationTests(unittest.TestCase):
                         value = {'Stacks': [{'StackId': stack, 'Outputs': [
                             {'OutputKey': 'Endpoint', 'OutputValue': outputs['endpoint']},
                             {'OutputKey': 'FunctionUrl', 'OutputValue': outputs['function_url']},
+                            {'OutputKey': 'OwnerNotificationConfigured', 'OutputValue': owner_configured},
                             {'OutputKey': 'DistributionId', 'OutputValue': 'EEXAMPLE'}],
                             'Parameters': [{'ParameterKey': 'OwnerNotificationEmail', 'ParameterValue': previous_email}]}]}
                 elif command[1:3] == ['lambda', 'invoke']:
+                    if remaining_throttles:
+                        remaining_throttles -= 1
+                        return subprocess.CompletedProcess(command, 255, stdout='', stderr=(
+                            'An error occurred (TooManyRequestsException) when calling the Invoke operation: busy'))
                     index = command.index('--payload')
                     action = json.loads(command[index + 1])['action']
                     actions.append(action)
-                    response = {'stopped': True} if action == 'stop' else next(results)
+                    if action == 'stop':
+                        response = next(stops) if stops is not None else (stop_result or {'stopped': True, 'resumeAllowed': True})
+                    else:
+                        response = next(results)
                     Path(command[index + 2]).write_text(json.dumps(response))
             elif command[0] == 'terraform':
                 if command[2] == 'show':
@@ -145,11 +157,55 @@ class ReleaseVerificationTests(unittest.TestCase):
     def test_deployment_records_stop_before_updates_and_waits_only_for_alarm_initialization(self):
         actions, calls, sleeps, _ = self.run_deployment([
             {'stopped': True, 'reason': 'control_alarm'}, {'stopped': False}], [])
-        self.assertEqual(actions, ['stop', 'resume', 'resume'])
+        self.assertEqual(actions, ['stop', 'stop', 'resume', 'resume'])
         stop_index = next(i for i, call in enumerate(calls) if call[:3] == ['aws', 'lambda', 'invoke'])
         apply_index = next(i for i, call in enumerate(calls) if call[:1] == ['terraform'] and call[2] == 'apply')
         self.assertLess(stop_index, apply_index)
         self.assertEqual(sleeps, [mock.call(30)])
+
+    def test_deployment_keeps_existing_manual_and_legacy_stops(self):
+        for stopped in ({'stopped': True, 'reason': 'manual_stop', 'resumeAllowed': False},
+                        {'stopped': True, 'reason': 'stop requested'}):
+            with self.subTest(stopped=stopped):
+                actions, _, _, _ = self.run_deployment([], stop_result=stopped)
+                self.assertEqual(actions, ['stop', 'stop'])
+
+    def test_explicit_operator_override_can_resume_an_existing_stop(self):
+        actions, calls, _, _ = self.run_deployment([{'stopped': False}], ['--resume-stopped'],
+            stop_result={'stopped': True, 'reason': 'manual_stop', 'resumeAllowed': False})
+        self.assertEqual(actions[-1], 'resume')
+        payloads = [json.loads(c[c.index('--payload') + 1]) for c in calls if c[:3] == ['aws', 'lambda', 'invoke']]
+        self.assertNotIn('deployment', payloads[-1])
+
+    def test_throttled_guard_invocation_retries_with_a_timeout_longer_than_lambda(self):
+        _, calls, sleeps, _ = self.run_deployment([{'stopped': False}], throttles=1)
+        self.assertEqual(sleeps, [mock.call(30)])
+        for call in calls:
+            if call[:3] == ['aws', 'lambda', 'invoke']:
+                self.assertIn('--cli-read-timeout', call)
+                self.assertGreater(int(call[call.index('--cli-read-timeout') + 1]), 120)
+
+    def test_masked_owner_address_requires_explicit_configuration(self):
+        with self.assertRaisesRegex(SystemExit, 'owner-email'):
+            self.run_deployment([], previous_email='****')
+
+    def test_disabled_masked_owner_configuration_can_remain_disabled(self):
+        _, _, _, settings = self.run_deployment([{'stopped': False}], previous_email='****',
+                                               owner_configured='false')
+        self.assertIn('owner_notification_email = ""', settings)
+
+    def test_guard_throttling_has_a_finite_retry_limit(self):
+        with self.assertRaisesRegex(RuntimeError, 'TooManyRequestsException'):
+            self.run_deployment([], throttles=6)
+
+    def test_legacy_first_stop_cannot_borrow_later_recovery_authority(self):
+        actions, _, _, _ = self.run_deployment([], stop_results=[
+            {'stopped': True}, {'stopped': True, 'resumeAllowed': True}])
+        self.assertEqual(actions, ['stop', 'stop'])
+
+    def test_revoked_deployment_authority_fails_without_alarm_waits(self):
+        with self.assertRaisesRegex(RuntimeError, 'ownership'):
+            self.run_deployment([{'stopped': True, 'reason': 'control_alarm', 'resumeAllowed': False}])
 
     def test_owner_email_is_preserved_unless_explicitly_replaced_or_removed(self):
         for args, expected in [([], 'previous@example.com'),

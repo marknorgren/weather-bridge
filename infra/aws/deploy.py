@@ -72,10 +72,13 @@ parser.add_argument('--cloudfront-plan', choices=['PAY_AS_YOU_GO', 'FREE'],
                          'flat-rate Free plan. Check eligibility first; see infra/aws/README.md.')
 parser.add_argument('--domain', help='Optional custom hostname; omitted preserves the existing hostname')
 parser.add_argument('--owner-email', type=owner_email,
-                    help='Optional owner notification email; omitted preserves the existing address, empty removes it')
+                    help='Owner notification email; required again when the deployed value is masked, empty disables delivery')
+parser.add_argument('--resume-stopped', action='store_true',
+                    help='Explicitly authorize guarded resume of a pre-existing stop after deployment')
 parser.add_argument('--prepare-domain', action='store_true',
                     help='Request the Terraform-managed certificate and print DNS records without pausing the demo')
 args = parser.parse_args()
+DEPLOYMENT_ID = secrets.token_hex(16)
 
 # Release verification must finish before any AWS or Terraform command. The copied files are
 # verified again so every later step uses exactly the bytes that passed validation.
@@ -97,16 +100,27 @@ except ReleaseError as error:
     raise SystemExit(f'Staged release verification failed before AWS access: {error}') from error
 
 
+class AwsCommandError(RuntimeError):
+    def __init__(self, message):
+        super().__init__(message)
+        match = re.search(r'An error occurred \(([A-Za-z0-9]+)\)', message)
+        self.code = match[1] if match else None
+
+
 def aws(*parts, json_output=False, allow_missing=False):
     command = ['aws', *parts]
     if args.profile:
         command.append('--profile=' + aws_profile(args.profile))
     command.extend(('--region=' + aws_region(args.region), '--no-cli-pager'))
-    result = subprocess.run(command, text=True, capture_output=json_output or allow_missing)
+    environment = dict(os.environ)
+    if parts[:2] == ('lambda', 'invoke'):
+        # Invoke retries are bounded below, and only throttles are safe to replay.
+        environment.update(AWS_RETRY_MODE='standard', AWS_MAX_ATTEMPTS='1')
+    result = subprocess.run(command, text=True, capture_output=json_output or allow_missing, env=environment)
     if result.returncode:
         if allow_missing and 'does not exist' in result.stderr:
             return None
-        raise RuntimeError(result.stderr or 'AWS CLI command failed')
+        raise AwsCommandError(result.stderr or 'AWS CLI command failed')
     return json.loads(result.stdout) if json_output else None
 
 
@@ -116,11 +130,20 @@ def tf(*parts, capture=False, check=True):
     return result
 
 
-def invoke(action):
+def invoke(action, deployment=False):
     path = state_dir / ('guard-' + action + '.json')
-    result = aws('lambda', 'invoke', '--function-name', 'weather-bridge-usage-guard',
-                 '--cli-binary-format', 'raw-in-base64-out', '--payload', json.dumps({'action': action}),
-                 str(path), json_output=True)
+    payload = {'action': action, **({'deployment': True, 'deploymentId': DEPLOYMENT_ID} if deployment else {})}
+    for attempt in range(6):
+        try:
+            result = aws('lambda', 'invoke', '--function-name', 'weather-bridge-usage-guard',
+                         '--cli-read-timeout', '150', '--cli-connect-timeout', '10',
+                         '--cli-binary-format', 'raw-in-base64-out', '--payload', json.dumps(payload),
+                         str(path), json_output=True)
+            break
+        except AwsCommandError as error:
+            if error.code != 'TooManyRequestsException' or attempt == 5:
+                raise
+            time.sleep(30)
     payload = json.loads(path.read_text())
     print(json.dumps(payload, indent=2), flush=True)
     if result.get('FunctionError'):
@@ -165,6 +188,12 @@ parameters = {'profile': args.profile, 'region': args.region, 'nws_contact': arg
               'reserved_concurrency': args.concurrency, 'cloudfront_pricing_plan': args.cloudfront_plan or 'PAY_AS_YOU_GO'}
 previous_email = next((p['ParameterValue'] for p in existing.get('weather-bridge-demo', {}).get('Parameters', [])
                        if p['ParameterKey'] == 'OwnerNotificationEmail'), '')
+if args.owner_email is None and re.fullmatch(r'\*+', previous_email):
+    configured = next((o['OutputValue'] for o in existing['weather-bridge-demo'].get('Outputs', [])
+                       if o['OutputKey'] == 'OwnerNotificationConfigured'), None)
+    if configured != 'false':
+        raise SystemExit('The deployed owner address is masked; supply --owner-email or --owner-email= explicitly.')
+    previous_email = ''
 parameters['owner_notification_email'] = previous_email if args.owner_email is None else args.owner_email
 if 'weather-bridge-demo' in existing:
     outputs = {o['OutputKey']: o['OutputValue'] for o in existing['weather-bridge-demo'].get('Outputs', [])}
@@ -186,7 +215,11 @@ if args.prepare_domain and not parameters['custom_domain']:
 
 def write_settings():
     # This local file is ignored. Public examples contain placeholders only.
-    (MODULE / 'deployment.auto.tfvars').write_text(''.join(k + ' = ' + json.dumps(v) + '\n' for k, v in parameters.items()))
+    path = MODULE / 'deployment.auto.tfvars'
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, 'w') as file:
+        file.write(''.join(k + ' = ' + json.dumps(v) + '\n' for k, v in parameters.items()))
     tf('fmt', 'deployment.auto.tfvars')
 
 
@@ -246,10 +279,11 @@ if parameters['custom_domain']:
     parameters['public_origin'] = public_origin('https://' + parameters['custom_domain'])
     write_settings()
 
+resume_allowed = False
 if 'weather-bridge-demo' in existing:
     # Record a deliberate stop before changing resources. A scheduled check must
     # never interpret deployment downtime as a recoverable monitoring pause.
-    invoke('stop')
+    resume_allowed = invoke('stop', deployment=True).get('resumeAllowed') is True
 apply()
 endpoint = output('endpoint')
 discovered = {'public_origin': public_origin(endpoint), 'origin_host': urlparse(output('function_url')).hostname}
@@ -258,6 +292,9 @@ if any(parameters[key] != value for key, value in discovered.items()):
     parameters.update(discovered)
     write_settings()
     apply()
+# Seed migration state and restore a stop after any CloudFormation drift.
+# This also rechecks whether a signal during apply revoked deployment recovery.
+stopped = invoke('stop', deployment=True)
 distribution = output('distribution_id')
 # Cached pages and assets must not outlive this deploy. One wildcard path counts as one of
 # the 1,000 free invalidation paths per month.
@@ -271,13 +308,19 @@ state = {'profile': args.profile, 'region': args.region, 'endpoint': endpoint,
          'stack': 'weather-bridge-demo', 'artifactStack': 'weather-bridge-artifacts',
          'demoFunction': 'weather-bridge-demo', 'guardFunction': 'weather-bridge-usage-guard'}
 (state_dir / 'state.json').write_text(json.dumps(state, indent=2) + '\n')
-for attempt in range(13):
-    resumed = invoke('resume')
-    if not resumed['stopped']:
-        break
-    # New/replaced alarms need complete OK evidence. Wait outside the Lambda;
-    # a budget, usage, or unknown stop is never retried automatically here.
-    if resumed.get('reason') != 'control_alarm' or attempt == 12:
-        raise RuntimeError('The usage guard refused resume: ' + str(resumed.get('reason', 'unknown')))
-    time.sleep(30)
+if args.resume_stopped or (resume_allowed and stopped.get('resumeAllowed') is True):
+    for attempt in range(13):
+        resumed = invoke('resume', deployment=not args.resume_stopped)
+        if not resumed['stopped']:
+            break
+        if resumed.get('resumeAllowed') is False:
+            raise RuntimeError('Deployment recovery ownership was revoked; explicit operator resume required.')
+        # New/replaced alarms need complete OK evidence. Wait outside the Lambda;
+        # a budget, usage, or unknown stop is never retried automatically here.
+        if resumed.get('reason') != 'control_alarm' or attempt == 12:
+            raise RuntimeError('The usage guard refused resume: ' + str(resumed.get('reason', 'unknown')))
+        time.sleep(30)
+else:
+    print('Release applied; demo remains stopped: ' + str(stopped.get('reason', 'unknown'))
+          + '. Explicit operator resume or --resume-stopped is required.', flush=True)
 print('Weather Bridge endpoint: ' + endpoint, flush=True)

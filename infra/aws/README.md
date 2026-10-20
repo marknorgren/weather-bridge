@@ -117,9 +117,9 @@ guidance](https://docs.github.com/en/actions/reference/workflows-and-actions/dep
 The workflow does not provision the OIDC provider, deployment role, environment,
 or variables. Until an operator completes those external prerequisites and
 explicitly enables deployment, it only builds and retains release artifacts.
-The deployment step uses AWS CLI standard retries with at most ten attempts.
-This lets its final guard resume retry throttling while a scheduled check occupies
-the guard's single reserved execution slot; the concurrency limit stays at one.
+Other AWS calls use standard CLI retries. Guard invocations use six attempts,
+with 30-second waits only for invocation throttling, and a 150-second read
+timeout above the function's 120-second deadline. The guard keeps one execution slot.
 
 Terraform is the deployment entry point. The driver runs Terraform plan and apply, and uses the AWS CLI for discovery, cache invalidation, and stop and resume.
 
@@ -136,7 +136,7 @@ The demo starts with concurrency zero. A deployment:
 1. Generates an origin-verification value once and keeps it in ignored `target/aws-deployment/origin-verify-secret`.
 2. Applies the stacks, then reads the generated CloudFront domain and Function URL host. A second apply configures the exact MCP hosts (CloudFront domain, Function URL host, loopback) and origin (CloudFront).
 3. Invalidates `/*` in CloudFront so cached pages and assets match the new build.
-4. Calls the usage guard, which enables the configured concurrency and the distribution only below every threshold.
+4. Calls the usage guard. A release can resume its own deployment stop below every threshold, but preserves a prior manual, budget, failure, or unknown stop. A unique run ID must match both stop results and the final resume; an interrupted earlier release cannot supply authority for a later one. First installation, migration from the old guard, and deliberate recovery require `--resume-stopped` or a later operator resume. A manually dispatched workflow exposes the equivalent `resume_stopped` input; ordinary pushes cannot set it.
 
 The endpoint and operational metadata are recorded in ignored `target/aws-deployment/state.json`; do not publish that local account state.
 
@@ -150,7 +150,7 @@ This runs guard, release, routing, and DNS helper tests, as CI does.
 
 ### Known plan difference
 
-CloudFormation hides the `NoEcho` origin-verification parameter when read. So AWS provider 6.67 shows that parameter as changed on every plan, even when it isn't. Applying it is safe: CloudFormation ignores an identical value. Keep `NoEcho` on and don't add the parameter to `ignore_changes`, or the provider would send the masked value during an unrelated update. To rotate the value, see [Origin protection](#origin-protection).
+CloudFormation hides the `NoEcho` origin-verification and owner-email parameters when read. So AWS provider 6.67 can show those parameters as changed on every plan, even when they are unchanged. Applying the same actual value is safe: CloudFormation ignores an identical value. Keep `NoEcho` on and do not add these parameters to `ignore_changes`, or the provider could send a masked value during an unrelated update. To rotate the origin value, see [Origin protection](#origin-protection).
 
 ## Request routing and caching
 
@@ -207,7 +207,7 @@ CloudWatch data can arrive late, and historical memory changes can affect the es
 
 ### Budget backstop
 
-A **$1/month cost budget for AWS Lambda and Amazon CloudFront** sends an SNS shutdown signal when actual reported charges for those services exceed **1% ($0.01)**. The budget keeps its original name, `weather-bridge-lambda-backstop`. It covers the whole account for those services, not only the demo, but its action stops only the demo. This is a delayed billing backstop, so charges may already have accrued. S3 is not included: artifact storage is a fraction of a cent, and account-wide S3 charges from unrelated buckets would stop the demo permanently. The existing account budget remains unchanged. Shutdown signals invoke the guard directly. A separate owner topic can deliver shutdown, recovery, and failure notices by email. Set `--owner-email address@example.com` in `deploy.py`, or `OWNER_NOTIFICATION_EMAIL` in the GitHub deployment environment, and confirm the SNS subscription. Omission preserves the deployed address; `--owner-email=` removes it. An empty address leaves email delivery unconfigured. The owner topic never invokes the guard, so notifications cannot cause a shutdown loop. Alarm status and logs remain available in the AWS console.
+A **$1/month cost budget for AWS Lambda and Amazon CloudFront** sends an SNS shutdown signal when actual reported charges for those services exceed **1% ($0.01)**. The budget keeps its original name, `weather-bridge-lambda-backstop`. It covers the whole account for those services, not only the demo, but its action stops only the demo. This is a delayed billing backstop, so charges may already have accrued. S3 is not included: artifact storage is a fraction of a cent, and account-wide S3 charges from unrelated buckets would stop the demo permanently. The existing account budget remains unchanged. Shutdown signals invoke the guard directly. A separate owner topic can deliver shutdown, recovery, and failure notices by email. Set `--owner-email address@example.com` in `deploy.py`, or the `OWNER_NOTIFICATION_EMAIL` secret in the GitHub deployment environment, and confirm the SNS subscription. CloudFormation masks this parameter, and Terraform marks it sensitive. Supply `--owner-email` again on later CLI deployments because the masked value cannot be recovered; `--owner-email=` disables delivery. CI supplies a configured environment secret. If an address is already configured, a missing secret fails before apply. A disabled subscription remains disabled without a secret. To remove a configured address from CI, manually dispatch with `disable_owner_notifications=true`. Move any existing `OWNER_NOTIFICATION_EMAIL` environment variable into the environment secret before release; workflow preflight rejects an unmigrated variable. Keep local Terraform state private; sensitive marking does not encrypt it. The owner topic never invokes the guard, so notifications cannot cause a shutdown loop. Alarm status and logs remain available in the AWS console.
 
 ### Concurrency constraint
 
@@ -277,7 +277,9 @@ A stop records its reason before changing services. Resume first records a
 locked intent, then restores concurrency and enables CloudFront. A crash or
 failed verification cannot retain automatic recovery authority. Missing,
 malformed, unreadable, or oversized state cannot authorize automatic resume.
-An explicit resume can initialize missing or malformed state after all checks
+An authorized listing that proves the record is absent initializes locked
+`unknown_state` without raising a Lambda error. It cannot resume the service.
+Malformed state still raises. An explicit resume can initialize missing or malformed state after all checks
 pass. A manual stop can replace missing or malformed state with locked intent.
 Denied state reads or writes remain errors.
 
@@ -290,9 +292,15 @@ Unexpected errors and scheduler failures retain their CloudWatch/SNS backstop.
 Failure logs include service, region, operation, AWS code, and request ID.
 Notification publish failures are logged without changing cost-control state.
 
-Deployment records a manual stop before applying infrastructure. Its final
-explicit resume allows up to twelve 30-second waits for new control alarms to report `OK`.
-A budget or usage-limit stop fails immediately. The runtime state object is not
+Deployment records `deployment_stop` only from a verified running service or
+monitoring pause. It preserves existing locked reasons and stops again after
+applying infrastructure. Its constrained resume can clear only `deployment_stop`;
+a new SNS signal revokes that authority. Revoked deployment authority fails
+immediately without alarm-initialization retries. `--resume-stopped` is an explicit operator
+override, still subject to all usage, alarm, and budget checks. Resume allows up
+to twelve 30-second waits for control alarms to report `OK`. A budget or usage-limit
+stop fails immediately, and missing budget spend returns `budget_unknown`.
+The runtime state object is not
 a Terraform artifact and must not be deleted during release cleanup.
 
 ## Stop, inspect, and resume

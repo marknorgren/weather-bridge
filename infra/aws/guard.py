@@ -43,7 +43,8 @@ CHECK_INTERVAL = dt.timedelta(minutes=5)
 TEMPORARY_CODES = frozenset({"InternalFailure", "InternalError", "ServiceException",
                             "ServiceUnavailable", "ServiceUnavailableException", "Throttling",
                             "ThrottlingException", "TooManyRequestsException", "RequestLimitExceeded",
-                            "RequestTimeout", "RequestTimeoutException"})
+                            "RequestTimeout", "RequestTimeoutException", "InternalServiceFault",
+                            "InternalErrorException", "Unavailable", "SlowDown"})
 
 
 class UsageReadError(Exception):
@@ -53,7 +54,9 @@ class UsageReadError(Exception):
         self.details = {"service": service, "region": region, "operation": operation,
                         "code": response.get("Error", {}).get("Code", type(error).__name__),
                         "awsRequestId": response.get("ResponseMetadata", {}).get("RequestId")}
-        self.temporary = (self.details["code"] in TEMPORARY_CODES or type(error).__name__ in {
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        server_failure = type(status) is int and (status == 429 or 500 <= status <= 599)
+        self.temporary = (server_failure or self.details["code"] in TEMPORARY_CODES or type(error).__name__ in {
             "EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError", "ConnectionClosedError"})
         super().__init__("usage read failed")
 
@@ -89,9 +92,22 @@ class StateError(ValueError):
     pass
 
 
+class MissingState(StateError):
+    """The authorized prefix listing proved that the record does not exist."""
+
+
 def state_record(mode, reason, previous=None):
     return {"version": 1, "mode": mode, "reason": reason, "since": utcnow().isoformat(),
             "successes": 0, "lastCheck": None, "signals": (previous or {}).get("signals", [])}
+
+
+def valid_deployment_id(value):
+    return isinstance(value, str) and len(value) == 32 and all(c in "0123456789abcdef" for c in value)
+
+
+def deployment_matches(state, identifier):
+    return ((state["mode"], state["reason"]) == ("locked", "deployment_stop")
+            and valid_deployment_id(identifier) and state.get("deploymentId") == identifier)
 
 
 def validate_state(state):
@@ -112,6 +128,9 @@ def validate_state(state):
             raise ValueError("only a pause can have recovery evidence")
         if state["mode"] == "paused" and state["reason"] != "monitoring_failure":
             raise ValueError("unknown recovery eligibility")
+        if "deploymentId" in state and (not valid_deployment_id(state["deploymentId"])
+                or (state["mode"], state["reason"]) != ("locked", "deployment_stop")):
+            raise ValueError("invalid deployment ownership")
     except (KeyError, TypeError, ValueError, AttributeError) as error:
         raise StateError("missing or malformed guard state; explicit resume required") from error
     return state
@@ -123,7 +142,7 @@ def load_state():
     # can return 403 for a missing object when the caller cannot list the bucket.
     listing = s3.list_objects_v2(Bucket=STATE_BUCKET, Prefix=STATE_KEY, MaxKeys=1)
     if not any(item["Key"] == STATE_KEY for item in listing.get("Contents", [])):
-        raise StateError("guard state is missing; explicit resume required")
+        raise MissingState("guard state is missing; explicit resume required")
     response = s3.get_object(Bucket=STATE_BUCKET, Key=STATE_KEY)
     body = response["Body"]
     try:
@@ -159,8 +178,10 @@ def notify(event, state):
             print(json.dumps({"event": "notification_failed", "errorType": type(error).__name__}))
 
 
-def stop_with_state(state, mode, reason, signals=None):
+def stop_with_state(state, mode, reason, signals=None, deployment_id=None):
     updated = state_record(mode, reason, state)
+    if deployment_id is not None:
+        updated["deploymentId"] = deployment_id
     if signals is not None:
         updated["signals"] = signals[-16:]
     save_state(updated)  # Persist ownership before changing either service.
@@ -178,6 +199,8 @@ def recovery_blocker():
         return "control_alarm"
     budget = usage_read(client("budgets", REGION), "describe_budget", AccountId=ACCOUNT_ID,
                         BudgetName=BUDGET_NAME)["Budget"]
+    if "CalculatedSpend" not in budget:
+        return "budget_unknown"
     actual, limit = budget["CalculatedSpend"]["ActualSpend"], budget["BudgetLimit"]
     spent, amount = Decimal(actual["Amount"]), Decimal(limit["Amount"])
     if (actual["Unit"] != "USD" or limit["Unit"] != "USD" or not spent.is_finite()
@@ -460,8 +483,18 @@ def handler(event, context):
         action = event.get("action", "check")
         if action not in {"check", "status", "stop", "resume"}:
             raise ValueError("action must be check, status, stop, or resume")
+        deployment_id = event.get("deploymentId")
+        if event.get("deployment") is True and not valid_deployment_id(deployment_id):
+            raise ValueError("deployment requires a unique 32-character hexadecimal run ID")
         try:
             state = load_state()
+        except MissingState:
+            state = state_record("locked", "unknown_state")
+            if action not in {"resume", "stop"} and not event.get("Records"):
+                # First install or migration: absence is expected and remains
+                # stopped, without creating an error alarm that races resume.
+                state = stop_with_state(state, "locked", "unknown_state")
+                return report(state)
         except StateError:
             if action not in {"resume", "stop"}:
                 raise
@@ -472,8 +505,24 @@ def handler(event, context):
                 state = stop_with_state(state, "locked", reason, signals)
             return report(state)
         if action == "stop":
+            if event.get("deployment") is True:
+                if state["mode"] == "locked":
+                    save_state(state)
+                    stop_demo()  # Preserve a prior lock, including its reason.
+                elif ((state["mode"] == "running" and (
+                        current_concurrency() != RESUME_CONCURRENCY or not distribution_enabled()))
+                      or (state["mode"] == "paused" and (
+                          current_concurrency() != 0 or distribution_enabled()))):
+                    state = stop_with_state(state, "locked", "unrecorded_stop")
+                else:
+                    state = stop_with_state(state, "locked", "deployment_stop", deployment_id=deployment_id)
+                return {**report(state), "resumeAllowed": deployment_matches(state, deployment_id)}
             state = stop_with_state(state, "locked", "manual_stop")
             return report(state)
+        if (action == "resume" and event.get("deployment") is True
+                and not deployment_matches(state, deployment_id)):
+            stop_demo()
+            return {**report(state), "resumeAllowed": False}
         if state["mode"] == "running" and (current_concurrency() != RESUME_CONCURRENCY or not distribution_enabled()):
             state = stop_with_state(state, "locked", "unrecorded_stop")
         elif state["mode"] == "paused" and (current_concurrency() != 0 or distribution_enabled()):
@@ -486,6 +535,10 @@ def handler(event, context):
                 state = stop_with_state(state, "locked", "usage_limit")
             elif action == "resume":
                 blocker = recovery_blocker()
+                if blocker == "control_alarm" and event.get("deployment") is True:
+                    # A pending OK observation does not replace deployment intent.
+                    # An actual SNS stop still replaces it and prevents retry.
+                    return {**report(state, usage), "reason": blocker}
                 state = (stop_with_state(state, "locked", blocker) if blocker
                          else resume_demo(state, "operator_resume"))
             elif state["mode"] == "paused" and action == "check":
@@ -514,12 +567,17 @@ def handler(event, context):
     except Exception as error:
         failed = state_record("locked", "guard_failure", state)
         print(json.dumps({"stopped": True, "reason": "guard operation failed", "errorType": type(error).__name__}))
+        persisted = False
         try:
             save_state(failed)
+            persisted = True
         except Exception as state_error:
             print(json.dumps({"event": "state_write_failed", "errorType": type(state_error).__name__}))
         finally:
             stop_demo()
-        notify("recovery_failed" if action == "resume" or (state and state["mode"] == "paused")
-               else "guard_failed", failed)
+        # Without readable/persisted state we cannot deduplicate notices. The
+        # control alarm independently notifies the owner on its state change.
+        if persisted and state and (state["mode"], state["reason"]) != ("locked", "guard_failure"):
+            notify("recovery_failed" if action == "resume" or state["mode"] == "paused"
+                   else "guard_failed", failed)
         raise

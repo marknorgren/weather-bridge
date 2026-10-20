@@ -20,6 +20,7 @@ spec.loader.exec_module(guard)
 BELOW = dict(requests=1, computeEstimateGBSeconds=1, cloudFrontRequests=1, cloudFrontBytes=1)
 UTC = dt.timezone.utc
 START = dt.datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
+DEPLOYMENT_ID = 'a' * 32
 
 
 class AwsError(Exception):
@@ -125,6 +126,76 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.state['mode'], 'locked')
         self.assertEqual(self.state['reason'], 'manual_stop')
         self.assertEqual(self.concurrency, 0)
+
+    def test_deployment_preserves_a_manual_lock_and_cannot_resume_it(self):
+        guard.handler({'action': 'stop'}, None)
+        result = guard.handler({'action': 'stop', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        self.assertFalse(result['resumeAllowed'])
+        self.assertEqual(self.state['reason'], 'manual_stop')
+        result = guard.handler({'action': 'resume', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        self.assertTrue(result['stopped'])
+        self.assertEqual(self.concurrency, 0)
+
+    def test_stale_deployment_intent_cannot_authorize_a_different_release(self):
+        guard.handler({'action': 'stop', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        other = {'deployment': True, 'deploymentId': 'b' * 32}
+        result = guard.handler({'action': 'stop', **other}, None)
+        self.assertFalse(result['resumeAllowed'])
+        result = guard.handler({'action': 'resume', **other}, None)
+        self.assertFalse(result['resumeAllowed'])
+        self.assertEqual(self.concurrency, 0)
+
+    def test_deployment_can_resume_only_its_own_stop(self):
+        result = guard.handler({'action': 'stop', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        self.assertTrue(result['resumeAllowed'])
+        self.assertEqual(self.state['reason'], 'deployment_stop')
+        self.assertFalse(guard.handler({'action': 'resume', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)['stopped'])
+
+    def test_signal_arriving_during_deployment_prevents_deployment_resume(self):
+        guard.handler({'action': 'stop', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        guard.handler(self.signal(), None)
+        result = guard.handler({'action': 'resume', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        self.assertTrue(result['stopped'])
+        self.assertEqual(self.state['reason'], 'budget_signal')
+
+    def test_deployment_does_not_claim_an_unrecorded_service_stop(self):
+        self.concurrency = 0
+        result = guard.handler({'action': 'stop', 'deployment': True, 'deploymentId': DEPLOYMENT_ID}, None)
+        self.assertFalse(result['resumeAllowed'])
+        self.assertEqual(self.state['reason'], 'unrecorded_stop')
+
+    def test_proven_absent_state_initializes_locked_without_emitting_an_error(self):
+        self.boundary('load_state', side_effect=guard.MissingState('missing state'))
+        result = self.check(5)
+        self.assertTrue(result['stopped'])
+        self.assertEqual(self.state['reason'], 'unknown_state')
+        self.assertEqual(self.concurrency, 0)
+
+    def test_documented_service_fault_and_unknown_server_errors_pause(self):
+        for code, status in [('InternalServiceFault', 500), ('NewServiceFault', 503),
+                             ('NewThrottle', 429), ('Unavailable', 503), ('InternalErrorException', 500)]:
+            with self.subTest(code=code):
+                self.state = guard.state_record('running', 'operator_resume')
+                self.concurrency, self.enabled = 3, True
+                error = AwsError(code)
+                error.response['ResponseMetadata']['HTTPStatusCode'] = status
+                self.collect.side_effect = guard.UsageReadError('cloudwatch', 'us-east-1', 'get_metric_statistics', error)
+                result = self.check(1)
+                self.assertEqual(result['mode'], 'paused')
+
+    def test_persistent_fault_does_not_notify_on_every_check(self):
+        self.collect.side_effect = ValueError('broken guard')
+        for minute in (1, 5, 10):
+            with self.assertRaises(ValueError):
+                self.check(minute)
+        guard.notify.assert_called_once()
+
+    def test_unreadable_state_relies_on_alarm_instead_of_repeated_owner_messages(self):
+        self.boundary('load_state', side_effect=PermissionError('state denied'))
+        for minute in (1, 5):
+            with self.assertRaises(PermissionError):
+                self.check(minute)
+        guard.notify.assert_not_called()
 
     def test_threshold_stop_cannot_auto_recover(self):
         self.pause()
@@ -403,6 +474,14 @@ class BoundaryTests(unittest.TestCase):
                 guard.recovery_blocker()
             alarms.pop()
             self.assertEqual(guard.recovery_blocker(), 'control_alarm')
+
+    def test_missing_calculated_spend_refuses_resume_without_a_guard_exception(self):
+        sdk = SimpleNamespace(
+            describe_alarms=lambda **_: {'MetricAlarms': [
+                {'AlarmName': name, 'StateValue': 'OK'} for name in guard.CONTROL_ALARMS]},
+            describe_budget=lambda **_: {'Budget': {'BudgetLimit': {'Amount': '1', 'Unit': 'USD'}}})
+        with patch.object(guard, 'client', return_value=sdk):
+            self.assertEqual(guard.recovery_blocker(), 'budget_unknown')
 
 
 if __name__ == '__main__':
