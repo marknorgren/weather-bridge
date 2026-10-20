@@ -153,3 +153,25 @@ were read-only; Codex made the repairs and reviewed the final diff. Deployed IAM
 subscription delivery, alarm timing and live recovery remain unverified. Remote
 CI and CodeQL remain unavailable evidence; no scanner closure is claimed. The
 managed Git SSH proxy still blocks fetch/push, so this is a local handoff.
+
+## Authorized restoration and release
+
+2026-10-20: The user authorized restoring service, then explicitly approved a
+public PR, squash merge after all required checks, and deployment. This supersedes
+the earlier local-only boundary. Host gh authentication works. HTTPS fetch and
+post-rebase full verification passed. The scoped gh Git API published both original
+trees and commits with identical hashes, avoiding a Git transport override.
+[PR #2](https://github.com/marknorgren/weather-bridge/pull/2) is the release record.
+
+The existing guard's explicit resume passed all 17 regions below usage limits.
+Budget actual spend was USD 0.009, below the USD 0.01 stop threshold, and control
+alarms were OK. CloudFront reached Deployed, public health returned HTTP 200,
+and live REST/MCP/NWS city, coordinates, units, forecast and alerts smoke passed.
+The permanent fix is still subject to the PR and deployment gates.
+
+The required GitHub audit reported six RustSec advisories in three existing TLS
+dependencies. Cargo regenerated only these patch versions: rustls 0.23.46,
+rustls-webpki 0.103.16 and webpki-roots 1.0.10. Compile checking passed. No advisory
+was ignored and no policy changed. The local audit database refresh is blocked
+by the SSH proxy and a non-fast-forward cache history; it was not force-reset.
+The fresh GitHub audit remains the authoritative release gate for these fixes.
