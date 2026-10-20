@@ -17,6 +17,14 @@ BELOW = {'requests': 1, 'computeEstimateGBSeconds': 1, 'cloudFrontRequests': 1, 
 @patch.object(guard, 'set_concurrency')
 @patch.object(guard, 'collect_usage')
 class GuardTests(unittest.TestCase):
+    def setUp(self):
+        state = guard.state_record('running', 'operator_resume')
+        for name, value in [('load_state', state), ('save_state', None), ('notify', None),
+                            ('recovery_blocker', None), ('distribution_enabled', True),
+                            ('current_concurrency', 3)]:
+            p = patch.object(guard, name, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
     def test_lambda_thresholds(self, collect, concurrency, distribution):
         self.assertFalse(guard.breached({**BELOW, 'requests': 799999, 'computeEstimateGBSeconds': 319999}))
         self.assertTrue(guard.breached({**BELOW, 'requests': 800000}))
@@ -50,7 +58,9 @@ class GuardTests(unittest.TestCase):
         distribution.assert_called_once_with(False)
 
     def test_health_or_billing_signal_stops_without_waiting_for_metrics(self, collect, concurrency, distribution):
-        guard.handler({'Records': [{'EventSource': 'aws:sns'}]}, None)
+        with patch.object(guard, 'STOP_TOPIC_ARN', 'trusted-topic'):
+            guard.handler({'Records': [{'EventSource': 'aws:sns', 'Sns': {
+                'TopicArn': 'trusted-topic', 'MessageId': 'signal-id', 'Message': 'budget exceeded'}}]}, None)
         concurrency.assert_called_once_with(0)
         distribution.assert_called_once_with(False)
         collect.assert_not_called()
@@ -59,7 +69,8 @@ class GuardTests(unittest.TestCase):
         distribution.side_effect = RuntimeError('distribution busy')
         with self.assertRaises(RuntimeError):
             guard.handler({'action': 'stop'}, None)
-        concurrency.assert_called_once_with(0)
+        concurrency.assert_any_call(0)
+        self.assertNotIn(call(3), concurrency.call_args_list)
 
     @patch.object(guard, 'client')
     def test_resume_restores_concurrency_and_distribution(self, client, collect, concurrency, distribution):
@@ -83,9 +94,9 @@ class GuardTests(unittest.TestCase):
     @patch.object(guard, 'client')
     def test_failed_resume_verification_stops_demo(self, client, collect, concurrency, distribution):
         collect.return_value = BELOW
-        client.return_value.get_function_concurrency.side_effect = PermissionError('read denied')
-        with self.assertRaises(PermissionError):
-            guard.handler({'action': 'resume'}, None)
+        with patch.object(guard, 'current_concurrency', side_effect=[3, PermissionError('read denied')]):
+            with self.assertRaises(PermissionError):
+                guard.handler({'action': 'resume'}, None)
         self.assertEqual(concurrency.call_args_list, [call(3), call(0)])
         self.assertEqual(distribution.call_args_list, [call(True), call(False)])
 
@@ -95,8 +106,8 @@ class GuardTests(unittest.TestCase):
         client.return_value.get_function_concurrency.return_value = {'ReservedConcurrentExecutions': 3}
         with patch.object(guard, 'distribution_enabled', return_value=False):
             result = guard.handler({'action': 'check'}, None)
-        concurrency.assert_not_called()
-        distribution.assert_not_called()
+        concurrency.assert_called_once_with(0)
+        distribution.assert_called_once_with(False)
         self.assertTrue(result['stopped'])
         self.assertFalse(result['distributionEnabled'])
 

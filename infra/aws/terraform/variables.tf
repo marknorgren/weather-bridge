@@ -4,6 +4,17 @@ variable "profile" {
   description = "AWS CLI profile, or null to use the standard AWS credential chain."
 }
 
+variable "owner_notification_email" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "Optional private owner email for shutdown and recovery notices. Confirm the SNS subscription after deployment."
+  validation {
+    condition     = var.owner_notification_email == "" || (length(var.owner_notification_email) <= 254 && can(regex("^[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z]{2,63}$", var.owner_notification_email)))
+    error_message = "Use an email address without spaces or controls, or an empty string to disable delivery."
+  }
+}
+
 variable "region" {
   type    = string
   default = "us-east-1"

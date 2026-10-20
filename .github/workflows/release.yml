@@ -9,6 +9,16 @@ on:
         description: Successful prior release workflow run ID to redeploy (leave blank to build this revision)
         required: false
         type: string
+      resume_stopped:
+        description: Explicitly authorize guarded resume of an existing stop after deployment
+        required: false
+        default: false
+        type: boolean
+      disable_owner_notifications:
+        description: Explicitly remove the owner email subscription
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -149,6 +159,9 @@ jobs:
           ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           DEPLOY_REGION: ${{ vars.AWS_REGION }}
           NWS_CONTACT: ${{ vars.NWS_CONTACT }}
+          LEGACY_OWNER_EMAIL: ${{ vars.OWNER_NOTIFICATION_EMAIL }}
+          OWNER_NOTIFICATION_EMAIL: ${{ secrets.OWNER_NOTIFICATION_EMAIL }}
+          DISABLE_OWNER_NOTIFICATIONS: ${{ inputs.disable_owner_notifications }}
         run: |
           for name in ROLE_ARN ACCOUNT_ID DEPLOY_REGION NWS_CONTACT; do
             if [ -z "${!name}" ]; then
@@ -156,6 +169,10 @@ jobs:
               exit 2
             fi
           done
+          if [ -n "$LEGACY_OWNER_EMAIL" ] && [ -z "$OWNER_NOTIFICATION_EMAIL" ] && [ "$DISABLE_OWNER_NOTIFICATIONS" != 'true' ]; then
+            echo 'Move OWNER_NOTIFICATION_EMAIL from the environment variable to an environment secret before deployment.' >&2
+            exit 2
+          fi
       - name: Download artifact archive
         env:
           GH_TOKEN: ${{ github.token }}
@@ -196,6 +213,9 @@ jobs:
           RESERVED_CONCURRENCY: ${{ vars.RESERVED_CONCURRENCY }}
           CLOUDFRONT_PLAN: ${{ vars.CLOUDFRONT_PLAN }}
           CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+          OWNER_NOTIFICATION_EMAIL: ${{ secrets.OWNER_NOTIFICATION_EMAIL }}
+          RESUME_STOPPED: ${{ inputs.resume_stopped }}
+          DISABLE_OWNER_NOTIFICATIONS: ${{ inputs.disable_owner_notifications }}
         run: |
           deploy=(python3 infra/aws/deploy.py
             --region "$DEPLOY_REGION"
@@ -205,4 +225,10 @@ jobs:
           if [ -n "$RESERVED_CONCURRENCY" ]; then deploy+=(--concurrency "$RESERVED_CONCURRENCY"); fi
           if [ -n "$CLOUDFRONT_PLAN" ]; then deploy+=(--cloudfront-plan "$CLOUDFRONT_PLAN"); fi
           if [ -n "$CUSTOM_DOMAIN" ]; then deploy+=(--domain "$CUSTOM_DOMAIN"); fi
+          if [ "$DISABLE_OWNER_NOTIFICATIONS" = 'true' ]; then
+            deploy+=(--owner-email=)
+          elif [ -n "$OWNER_NOTIFICATION_EMAIL" ]; then
+            deploy+=(--owner-email="$OWNER_NOTIFICATION_EMAIL")
+          fi
+          if [ "$RESUME_STOPPED" = 'true' ]; then deploy+=(--resume-stopped); fi
           "${deploy[@]}"

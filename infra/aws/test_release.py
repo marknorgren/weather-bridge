@@ -95,6 +95,140 @@ class ReleaseVerificationTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def run_deployment(self, resume_results, extra_args=(), previous_email='', stop_result=None, throttles=0,
+                       owner_configured='true', stop_results=None):
+        driver = self.directory / 'infra/aws/deploy.py'
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        (driver.parent / 'terraform').mkdir(exist_ok=True)
+        driver.write_bytes((ROOT / 'infra/aws/deploy.py').read_bytes())
+        calls = []
+        actions = []
+        outputs = {'endpoint': 'https://example.cloudfront.net/',
+                   'function_url': 'https://origin.lambda-url.us-east-1.on.aws/',
+                   'distribution_id': 'EEXAMPLE', 'distribution_endpoint': 'https://example.cloudfront.net/'}
+        results = iter(resume_results)
+        stops = iter(stop_results) if stop_results is not None else None
+        remaining_throttles = throttles
+        def execute(command, **_kwargs):
+            nonlocal remaining_throttles
+            calls.append(command)
+            value = {}
+            if command[0] == 'aws':
+                if command[1:3] == ['cloudformation', 'describe-stacks']:
+                    stack = command[command.index('--stack-name') + 1]
+                    if stack.endswith('artifacts'):
+                        value = {'Stacks': [{'StackId': stack, 'Outputs': [{'OutputKey': 'Bucket', 'OutputValue': 'private-bucket'}]}]}
+                    else:
+                        value = {'Stacks': [{'StackId': stack, 'Outputs': [
+                            {'OutputKey': 'Endpoint', 'OutputValue': outputs['endpoint']},
+                            {'OutputKey': 'FunctionUrl', 'OutputValue': outputs['function_url']},
+                            {'OutputKey': 'OwnerNotificationConfigured', 'OutputValue': owner_configured},
+                            {'OutputKey': 'DistributionId', 'OutputValue': 'EEXAMPLE'}],
+                            'Parameters': [{'ParameterKey': 'OwnerNotificationEmail', 'ParameterValue': previous_email}]}]}
+                elif command[1:3] == ['lambda', 'invoke']:
+                    if remaining_throttles:
+                        remaining_throttles -= 1
+                        return subprocess.CompletedProcess(command, 255, stdout='', stderr=(
+                            'An error occurred (TooManyRequestsException) when calling the Invoke operation: busy'))
+                    index = command.index('--payload')
+                    action = json.loads(command[index + 1])['action']
+                    actions.append(action)
+                    if action == 'stop':
+                        response = next(stops) if stops is not None else (stop_result or {'stopped': True, 'resumeAllowed': True})
+                    else:
+                        response = next(results)
+                    Path(command[index + 2]).write_text(json.dumps(response))
+            elif command[0] == 'terraform':
+                if command[2] == 'show':
+                    value = {'resource_changes': []}
+                elif command[2] == 'output':
+                    value = outputs[command[-1]]
+            else:
+                self.fail('unexpected subprocess: ' + str(command))
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(value))
+        args = [str(driver), '--contact', 'test@example.com', '--release', str(self.directory),
+                '--revision', REVISION, *extra_args]
+        with mock.patch.dict(sys.modules, {'release': release}), mock.patch.object(sys, 'argv', args), mock.patch(
+                'subprocess.run', side_effect=execute), mock.patch('time.sleep') as sleep:
+            runpy.run_path(str(driver), run_name='__main__')
+        settings = (driver.parent / 'terraform/deployment.auto.tfvars').read_text()
+        return actions, calls, sleep.call_args_list, settings
+
+    def test_deployment_records_stop_before_updates_and_waits_only_for_alarm_initialization(self):
+        actions, calls, sleeps, _ = self.run_deployment([
+            {'stopped': True, 'reason': 'control_alarm'}, {'stopped': False}], [])
+        self.assertEqual(actions, ['stop', 'stop', 'resume', 'resume'])
+        stop_index = next(i for i, call in enumerate(calls) if call[:3] == ['aws', 'lambda', 'invoke'])
+        apply_index = next(i for i, call in enumerate(calls) if call[:1] == ['terraform'] and call[2] == 'apply')
+        self.assertLess(stop_index, apply_index)
+        self.assertEqual(sleeps, [mock.call(30)])
+
+    def test_deployment_keeps_existing_manual_and_legacy_stops(self):
+        for stopped in ({'stopped': True, 'reason': 'manual_stop', 'resumeAllowed': False},
+                        {'stopped': True, 'reason': 'stop requested'}):
+            with self.subTest(stopped=stopped):
+                actions, _, _, _ = self.run_deployment([], stop_result=stopped)
+                self.assertEqual(actions, ['stop', 'stop'])
+
+    def test_explicit_operator_override_can_resume_an_existing_stop(self):
+        actions, calls, _, _ = self.run_deployment([{'stopped': False}], ['--resume-stopped'],
+            stop_result={'stopped': True, 'reason': 'manual_stop', 'resumeAllowed': False})
+        self.assertEqual(actions[-1], 'resume')
+        payloads = [json.loads(c[c.index('--payload') + 1]) for c in calls if c[:3] == ['aws', 'lambda', 'invoke']]
+        self.assertNotIn('deployment', payloads[-1])
+
+    def test_throttled_guard_invocation_retries_with_a_timeout_longer_than_lambda(self):
+        _, calls, sleeps, _ = self.run_deployment([{'stopped': False}], throttles=1)
+        self.assertEqual(sleeps, [mock.call(30)])
+        for call in calls:
+            if call[:3] == ['aws', 'lambda', 'invoke']:
+                self.assertIn('--cli-read-timeout', call)
+                self.assertGreater(int(call[call.index('--cli-read-timeout') + 1]), 120)
+
+    def test_masked_owner_address_requires_explicit_configuration(self):
+        with self.assertRaisesRegex(SystemExit, 'owner-email'):
+            self.run_deployment([], previous_email='****')
+
+    def test_disabled_masked_owner_configuration_can_remain_disabled(self):
+        _, _, _, settings = self.run_deployment([{'stopped': False}], previous_email='****',
+                                               owner_configured='false')
+        self.assertIn('owner_notification_email = ""', settings)
+
+    def test_guard_throttling_has_a_finite_retry_limit(self):
+        with self.assertRaisesRegex(RuntimeError, 'TooManyRequestsException'):
+            self.run_deployment([], throttles=6)
+
+    def test_legacy_first_stop_cannot_borrow_later_recovery_authority(self):
+        actions, _, _, _ = self.run_deployment([], stop_results=[
+            {'stopped': True}, {'stopped': True, 'resumeAllowed': True}])
+        self.assertEqual(actions, ['stop', 'stop'])
+
+    def test_revoked_deployment_authority_fails_without_alarm_waits(self):
+        with self.assertRaisesRegex(RuntimeError, 'ownership'):
+            self.run_deployment([{'stopped': True, 'reason': 'control_alarm', 'resumeAllowed': False}])
+
+    def test_owner_email_is_preserved_unless_explicitly_replaced_or_removed(self):
+        for args, expected in [([], 'previous@example.com'),
+                               (['--owner-email', 'new@example.com'], 'new@example.com'),
+                               (['--owner-email='], '')]:
+            with self.subTest(args=args):
+                _, _, _, settings = self.run_deployment([{'stopped': False}], args, 'previous@example.com')
+                self.assertIn('owner_notification_email = ' + json.dumps(expected), settings)
+
+    def test_deployment_does_not_retry_a_budget_stop(self):
+        with self.assertRaisesRegex(RuntimeError, 'budget_limit'):
+            self.run_deployment([{'stopped': True, 'reason': 'budget_limit'}])
+
+    def test_invalid_owner_email_fails_before_any_external_command(self):
+        for email in ('a\nb@example.com', '--bad@example.com', '${file("secret")}@example.com', 'a@b', 'a' * 255):
+            with self.subTest(email=email), mock.patch.object(sys, 'argv', [
+                    str(ROOT / 'infra/aws/deploy.py'), '--contact', 'test@example.com',
+                    '--release', str(self.directory), '--revision', REVISION, '--owner-email=' + email]), mock.patch(
+                    'subprocess.run') as run, mock.patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    runpy.run_path(str(ROOT / 'infra/aws/deploy.py'), run_name='__main__')
+                run.assert_not_called()
+
     def test_rejects_missing_manifest(self):
         (self.directory / 'release-manifest.json').unlink()
         with self.assertRaisesRegex(release.ReleaseError, 'manifest is missing'):

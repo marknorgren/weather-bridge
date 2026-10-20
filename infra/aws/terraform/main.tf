@@ -89,17 +89,18 @@ resource "aws_cloudformation_stack" "demo" {
   template_body = file("${path.module}/../template.json")
   capabilities  = ["CAPABILITY_IAM"]
   parameters = {
-    ArtifactBucket        = aws_cloudformation_stack.artifacts.outputs["Bucket"]
-    AppKey                = aws_s3_object.app.key
-    GuardKey              = aws_s3_object.guard.key
-    NwsUserAgent          = "WeatherBridge/0.1 (+${var.nws_contact})"
-    PublicHost            = local.host
-    PublicOrigin          = local.origin
-    ReservedConcurrency   = var.reserved_concurrency
-    OriginVerifySecret    = var.origin_verify_secret
-    CloudFrontPricingPlan = var.cloudfront_pricing_plan
-    CustomDomain          = var.custom_domain
-    CertificateArn        = var.custom_domain == "" ? "" : aws_acm_certificate.public[0].arn
+    ArtifactBucket         = aws_cloudformation_stack.artifacts.outputs["Bucket"]
+    AppKey                 = aws_s3_object.app.key
+    GuardKey               = aws_s3_object.guard.key
+    NwsUserAgent           = "WeatherBridge/0.1 (+${var.nws_contact})"
+    PublicHost             = local.host
+    PublicOrigin           = local.origin
+    ReservedConcurrency    = var.reserved_concurrency
+    OriginVerifySecret     = var.origin_verify_secret
+    CloudFrontPricingPlan  = var.cloudfront_pricing_plan
+    CustomDomain           = var.custom_domain
+    CertificateArn         = var.custom_domain == "" ? "" : aws_acm_certificate.public[0].arn
+    OwnerNotificationEmail = var.owner_notification_email
   }
   tags = { Project = "weather-bridge" }
 

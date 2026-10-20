@@ -175,11 +175,17 @@ model {
       description 'Every five minutes'
     }
     guard = container 'Usage guard' {
-      description 'Stops the demo at 80% of Lambda or CloudFront free allowances'
+      description 'Stops at cost limits; only temporary monitoring pauses can recover after two full scheduled checks'
       technology 'Python 3.13 Lambda'
     }
     metrics = datastore 'CloudWatch' {
       description 'Lambda and CloudFront usage metrics and logs'
+    }
+    guardState = datastore 'Private guard state' {
+      description 'One S3 object in the artifact bucket records stop ownership and recovery evidence'
+    }
+    ownerNotices = container 'SNS owner notices' {
+      description 'Optional confirmed email subscription for shutdown, recovery, and failure notices'
     }
     sns = container 'SNS shutdown topic' {
       description 'Monitor errors and alarms signal a shutdown'
@@ -193,7 +199,9 @@ model {
   lambda -> httpApi 'Runs'
   eventbridge -> guard 'Invokes'
   sns -> guard 'Shutdown signal'
-  guard -[reads]-> metrics 'Monthly usage'
+  guard -[reads]-> metrics 'Monthly usage and control alarms'
+  guard -> guardState 'Reads and writes stop ownership'
+  guard -> ownerNotices 'Publishes state changes'
   guard -> lambda 'Sets concurrency to 0 or restores it'
   guard -> cloudfront 'Disables or enables distribution'
 }
