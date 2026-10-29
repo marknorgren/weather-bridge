@@ -456,7 +456,19 @@ class BoundaryTests(unittest.TestCase):
             guard.notify('recovered', guard.state_record('running', 'monitoring_recovered'))
         self.assertIn('notification_failed', output.getvalue())
 
-    def test_recovery_requires_complete_ok_alarms_and_below_budget(self):
+    def test_budget_signal_uses_the_full_one_dollar_monthly_budget(self):
+        template = json.loads(Path(__file__).with_name('template.json').read_text())
+        properties = template['Resources']['LambdaCostBackstop']['Properties']
+        self.assertEqual(properties['Budget']['BudgetLimit'], {'Amount': 1, 'Unit': 'USD'})
+        self.assertEqual(properties['Budget']['TimeUnit'], 'MONTHLY')
+        notification, = properties['NotificationsWithSubscribers']
+        self.assertEqual(notification['Notification'], {
+            'NotificationType': 'ACTUAL', 'ComparisonOperator': 'GREATER_THAN',
+            'Threshold': 100, 'ThresholdType': 'PERCENTAGE'})
+        self.assertEqual(notification['Subscribers'], [
+            {'SubscriptionType': 'SNS', 'Address': {'Ref': 'GuardTopic'}}])
+
+    def test_recovery_requires_complete_ok_alarms_and_not_over_budget(self):
         alarms = [{'AlarmName': name, 'StateValue': 'OK'} for name in guard.CONTROL_ALARMS]
         actual = {'Amount': '0.009', 'Unit': 'USD'}
         sdk = SimpleNamespace(
@@ -464,10 +476,11 @@ class BoundaryTests(unittest.TestCase):
             describe_budget=lambda **_: {'Budget': {'CalculatedSpend': {'ActualSpend': actual},
                                                      'BudgetLimit': {'Amount': '1', 'Unit': 'USD'}}})
         with patch.object(guard, 'client', return_value=sdk):
-            self.assertIsNone(guard.recovery_blocker())
-            actual['Amount'] = '0.010'
-            self.assertIsNone(guard.recovery_blocker())
-            actual['Amount'] = '0.011'
+            for amount in ('0.009', '0.013', '0.999', '1.000'):
+                with self.subTest(amount=amount):
+                    actual['Amount'] = amount
+                    self.assertIsNone(guard.recovery_blocker())
+            actual['Amount'] = '1.001'
             self.assertEqual(guard.recovery_blocker(), 'budget_limit')
             actual['Amount'] = 'NaN'
             with self.assertRaises(ValueError):
