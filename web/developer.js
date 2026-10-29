@@ -134,6 +134,8 @@ function choose(tool) {
     text('tool-name', tool.name);
     text('tool-description', tool.description || '');
     $('location-hint').hidden = !tool.inputSchema.properties?.city;
+    $('location-mode-field').hidden = !tool.inputSchema.properties?.city;
+    $('location-mode').value = 'city';
     $('fields').replaceChildren();
     $('use-json').checked = false;
     const required = tool.inputSchema.required || [];
@@ -174,6 +176,7 @@ function choose(tool) {
         container.append(label, input, description);
         $('fields').append(container);
     }
+    updateLocationFields();
     $('arguments').value = JSON.stringify(fieldArguments(), null, 2);
     text('schema', JSON.stringify(tool, null, 2));
     $('result').hidden = true;
@@ -184,6 +187,7 @@ function choose(tool) {
 function fieldArguments() {
     const args = {};
     for (const input of $('fields').querySelectorAll('input,select')) {
+        if (input.disabled) continue;
         if (input.value.trim() === '') continue;
         const value = ['integer', 'number'].includes(input.dataset.type)
             ? Number(input.value)
@@ -194,9 +198,30 @@ function fieldArguments() {
     }
     return args;
 }
+const locationFields = ['city', 'cityId', 'lat', 'lon'];
+function updateLocationFields() {
+    const hasLocation = !$('location-mode-field').hidden;
+    const selected = $('location-mode').value;
+    const json = $('use-json').checked;
+    $('location-mode').disabled = json;
+    for (const input of $('fields').querySelectorAll('input,select')) {
+        const isLocation = hasLocation && locationFields.includes(input.name);
+        const active =
+            !isLocation ||
+            (selected === 'coordinates'
+                ? ['lat', 'lon'].includes(input.name)
+                : selected === input.name);
+        input.closest('.field').hidden = !active;
+        input.disabled = json || !active;
+        if (isLocation) input.required = active;
+    }
+}
+$('location-mode').addEventListener('change', () => {
+    updateLocationFields();
+    $('arguments').value = JSON.stringify(fieldArguments(), null, 2);
+});
 $('use-json').addEventListener('change', () => {
-    for (const input of $('fields').querySelectorAll('input,select'))
-        input.disabled = $('use-json').checked;
+    updateLocationFields();
 });
 $('fields').addEventListener('input', () => {
     if (!$('use-json').checked) $('arguments').value = JSON.stringify(fieldArguments(), null, 2);
@@ -211,6 +236,7 @@ $('tool-form').addEventListener('submit', async (event) => {
     text('call-status', 'Calling the MCP tool…');
     $('result').hidden = true;
     $('result-title').hidden = true;
+    $('request-details').hidden = true;
     try {
         const args = $('use-json').checked ? JSON.parse($('arguments').value) : fieldArguments();
         if (!args || Array.isArray(args) || typeof args !== 'object')
@@ -238,4 +264,7 @@ $('tool-form').addEventListener('submit', async (event) => {
 const endpoint = location.origin + '/mcp';
 $('endpoint').href = endpoint;
 $('endpoint').textContent = endpoint;
+window.addEventListener('hashchange', () => {
+    void tab(location.hash === '#mcp' ? 'mcp' : 'rest');
+});
 void tab(location.hash === '#mcp' ? 'mcp' : 'rest');
