@@ -206,8 +206,8 @@ def recovery_blocker():
     if (actual["Unit"] != "USD" or limit["Unit"] != "USD" or not spent.is_finite()
             or not amount.is_finite() or spent < 0 or amount <= 0):
         raise ValueError("invalid budget evidence")
-    # Matches template.json: actual charges GREATER_THAN 1% of the USD 1 budget.
-    return "budget_limit" if spent > amount / 100 else None
+    # Matches template.json: actual charges GREATER_THAN 100% of the USD 1 budget.
+    return "budget_limit" if spent > amount else None
 
 
 def signal_reason(event, state):

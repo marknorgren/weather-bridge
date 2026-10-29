@@ -623,7 +623,7 @@
             "Notification": {
               "NotificationType": "ACTUAL",
               "ComparisonOperator": "GREATER_THAN",
-              "Threshold": 1,
+              "Threshold": 100,
               "ThresholdType": "PERCENTAGE"
             },
             "Subscribers": [

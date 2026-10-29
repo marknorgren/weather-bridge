@@ -266,6 +266,104 @@ test('MCP rejects non-object JSON locally and distinguishes tool errors', async 
     await expect(page.locator('#run-tool')).toBeEnabled();
 });
 
+const weatherTool = {
+    name: 'get_weather',
+    description: 'Weather by one location',
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+        type: 'object',
+        properties: {
+            city: { type: ['string', 'null'] },
+            cityId: { type: ['integer', 'null'], minimum: 1 },
+            lat: { type: ['number', 'null'], minimum: -90, maximum: 90 },
+            lon: { type: ['number', 'null'], minimum: -180, maximum: 180 },
+            units: { $ref: '#/$defs/Units', default: 'us' },
+        },
+        $defs: { Units: { type: 'string', enum: ['us', 'metric'] } },
+    },
+};
+
+test('MCP form sends exactly one location and requires both coordinates', async ({ page }) => {
+    const calls = [];
+    await page.route('**/mcp', async (route) => {
+        const request = route.request().postDataJSON();
+        if (request.method === 'notifications/initialized')
+            return route.fulfill({ status: 202, body: '' });
+        if (request.method === 'tools/call') calls.push(request.params.arguments);
+        const result =
+            request.method === 'tools/list'
+                ? { tools: [weatherTool] }
+                : request.method === 'initialize'
+                  ? {
+                        protocolVersion: '2025-11-25',
+                        capabilities: {},
+                        serverInfo: { name: 'fixture', version: '1' },
+                    }
+                  : { structuredContent: { data: report() } };
+        await route.fulfill({ json: { jsonrpc: '2.0', id: request.id, result } });
+    });
+    await page.goto('/developer#mcp');
+    await expect(page.locator('#argument-city')).toHaveValue('Seattle, WA');
+    await page.locator('#run-tool').click();
+    await expect(page.locator('#call-status')).toHaveText('Tool completed.');
+    expect(calls).toEqual([{ city: 'Seattle, WA', units: 'us' }]);
+
+    await page.getByLabel('Location type', { exact: true }).selectOption('cityId');
+    await page.locator('#argument-cityId').fill('5809844');
+    await page.locator('#argument-units').selectOption('metric');
+    await page.locator('#run-tool').click();
+    await expect.poll(() => calls.length).toBe(2);
+    expect(calls[1]).toEqual({ cityId: 5809844, units: 'metric' });
+
+    await page.getByLabel('Location type', { exact: true }).selectOption('coordinates');
+    await page.locator('#argument-lat').fill('47.6062');
+    await page.locator('#run-tool').click();
+    expect(calls).toHaveLength(2);
+    expect(
+        await page.locator('#argument-lon').evaluate((input) => input.validity.valueMissing),
+    ).toBe(true);
+    await page.locator('#argument-lon').fill('-122.3321');
+    await page.locator('#run-tool').click();
+    await expect.poll(() => calls.length).toBe(3);
+    expect(calls[2]).toEqual({ lat: 47.6062, lon: -122.3321, units: 'metric' });
+
+    await page.getByText('Use JSON arguments instead', { exact: true }).click();
+    await page.locator('#use-json').check();
+    await page.locator('#arguments').fill('{"cityId":5809844}');
+    await page.locator('#run-tool').click();
+    await expect.poll(() => calls.length).toBe(4);
+    expect(calls[3]).toEqual({ cityId: 5809844 });
+});
+
+test('developer tabs follow fragment navigation', async ({ page }) => {
+    await mcp(page);
+    await expect(page.locator('#mcp-panel')).toBeVisible();
+    await page.evaluate(() => {
+        location.hash = '#rest';
+    });
+    await expect(page.locator('#rest-panel')).toBeVisible();
+    await expect(page.locator('#rest-tab')).toHaveAttribute('aria-selected', 'true');
+    await page.evaluate(() => {
+        location.hash = '#mcp';
+    });
+    await expect(page.locator('#mcp-panel')).toBeVisible();
+});
+
+test('MCP invalid JSON does not display a previous request as the failed request', async ({
+    page,
+}) => {
+    await mcp(page);
+    await page.locator('#run-tool').click();
+    await expect(page.locator('#call-status')).toHaveText('Tool completed.');
+    await expect(page.locator('#request-details')).toBeVisible();
+    await page.getByText('Use JSON arguments instead', { exact: true }).click();
+    await page.locator('#use-json').check();
+    await page.locator('#arguments').fill('[]');
+    await page.locator('#run-tool').click();
+    await expect(page.locator('#call-status')).toHaveText('Arguments must be a JSON object.');
+    await expect(page.locator('#request-details')).toBeHidden();
+});
+
 test('ambiguous names return choices and original alert text is rendered safely', async ({
     page,
 }) => {

@@ -39,7 +39,8 @@ jobs:
       - run: just check-msrv
 
   browser:
-    runs-on: ubuntu-latest
+    # Playwright 1.58.2 supports Ubuntu 24.04, not the current ubuntu-latest image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
