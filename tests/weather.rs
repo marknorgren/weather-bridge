@@ -12,11 +12,16 @@ use weather_bridge::{
 };
 #[tokio::test]
 async fn normalization_nearest_station_and_cache() {
-    let h = fixture(Faults::default()).await;
+    // Fresh, so the nearest station answers and the search ends there.
+    let h = fixture(Faults {
+        fresh_observation: true,
+        ..Default::default()
+    })
+    .await;
     let report = wire(h.weather.report(seattle()).await);
     assert_eq!(report["current"]["station"], "NEAR");
     assert_eq!(report["current"]["temperature"]["value"], 68.0);
-    assert_eq!(report["current"]["stale"], true);
+    assert_eq!(report["current"]["stale"], false);
     assert_eq!(report["alertsStatus"], "checked");
     assert!(report["hourly"][0]["precipitationProbabilityPercent"].is_null());
     let before = h.hits.load(Ordering::SeqCst);
@@ -32,6 +37,51 @@ async fn normalization_nearest_station_and_cache() {
     assert_eq!(metric["current"]["temperature"]["value"], 20.0);
     assert_eq!(metric["current"]["windSpeed"]["value"], 36.0);
     assert_eq!(h.hits.load(Ordering::SeqCst), before);
+}
+#[tokio::test]
+async fn fresh_later_station_beats_stale_nearest_station() {
+    let h = fixture(Faults {
+        three_stations: true,
+        mid_fresh_observation: true,
+        ..Default::default()
+    })
+    .await;
+    let report = wire(h.weather.report(seattle()).await);
+    assert_eq!(report["current"]["station"], "MID");
+    assert_eq!(report["current"]["stale"], false);
+    assert_eq!(report["current"]["temperature"]["value"], 50.0);
+}
+#[tokio::test]
+async fn all_stale_stations_keep_the_first_usable_observation() {
+    let h = fixture(Faults {
+        three_stations: true,
+        mid_stale_observation: true,
+        ..Default::default()
+    })
+    .await;
+    let report = wire(h.weather.report(seattle()).await);
+    assert_eq!(report["current"]["station"], "NEAR");
+    assert_eq!(report["current"]["stale"], true);
+    // The search stays within the three-station limit.
+    let observations = h
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.ends_with("/observations/latest"))
+        .count();
+    assert!(observations <= 3, "{observations}");
+}
+#[tokio::test]
+async fn future_dated_observation_is_not_fresh() {
+    let h = fixture(Faults {
+        near_observation_future_seconds: Some(3 * 3600),
+        ..Default::default()
+    })
+    .await;
+    let report = wire(h.weather.report(seattle()).await);
+    assert_eq!(report["current"]["station"], "NEAR");
+    assert_eq!(report["current"]["stale"], true);
 }
 #[tokio::test]
 async fn alert_outage_is_never_reported_as_all_clear() {
@@ -380,7 +430,12 @@ async fn only_points_404_means_outside_coverage() {
 }
 #[tokio::test]
 async fn nearby_coordinates_share_one_rounded_upstream_point() {
-    let h = fixture(Faults::default()).await;
+    // Fresh, so the nearest station answers and the search ends there.
+    let h = fixture(Faults {
+        fresh_observation: true,
+        ..Default::default()
+    })
+    .await;
     let first = wire(h.weather.report(coordinates(47.6062, -122.3321)).await);
     let hits = h.hits.load(Ordering::SeqCst);
     let nudged = wire(h.weather.report(coordinates(47.6131, -122.3274)).await);
@@ -467,7 +522,13 @@ fn assert_fresh_for_at_most_two_minutes((status, cache): (u16, String), path: &s
 }
 #[tokio::test]
 async fn complete_reports_are_briefly_cacheable() {
-    let h = fixture(Faults::default()).await;
+    // A fresh nearest observation ends the station search; a stale one tries the next
+    // station, and the fixture's missing FAR observation is a failed source.
+    let h = fixture(Faults {
+        fresh_observation: true,
+        ..Default::default()
+    })
+    .await;
     for route in ["/v1/weather", "/v1/forecast/hourly", "/v1/alerts"] {
         let path = format!("{route}?{SEATTLE}");
         assert_fresh_for_at_most_two_minutes(http_get(&h.weather, &path).await, &path);

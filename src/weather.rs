@@ -292,9 +292,9 @@ impl Weather {
             cache_max_age_seconds: CACHE_SECONDS,
         })
     }
-    /// The latest observation from the nearest of up to three stations. A station whose
-    /// observation has no temperature is kept only until a later one has a temperature.
-    /// The search stops at [`OBSERVATION_BUDGET`] with whatever it has found.
+    /// The best latest observation from the nearest of up to three stations: the first
+    /// fresh one with a temperature, else the first stale one with a temperature, else an
+    /// observation without a temperature. The search stops at the first fresh one and at [`OBSERVATION_BUDGET`] with whatever it has found.
     async fn observation(
         &self,
         stations: &Stations,
@@ -315,13 +315,22 @@ impl Weather {
             else {
                 continue;
             };
-            let has_temperature = current.temperature.is_some();
-            found = Some(current);
-            if has_temperature {
+            let rank = observation_rank(&current);
+            let fresh = rank == 2;
+            // A better observation replaces the kept one. Equal rank keeps the nearer
+            // station, except that a later observation without a temperature still
+            // replaces an earlier one without a temperature.
+            if found
+                .as_ref()
+                .is_none_or(|(best, _)| rank > *best || rank == 0)
+            {
+                found = Some((rank, current));
+            }
+            if fresh {
                 break;
             }
         }
-        found
+        found.map(|(_, current)| current)
     }
     /// The active alerts. A response without a `features` list cannot show that no alerts
     /// are active, so it counts as a failed check rather than an all-clear.
@@ -333,6 +342,15 @@ impl Weather {
         QuerySource {
             url: self.nws.public_url(path),
         }
+    }
+}
+/// 2 for a fresh observation with a temperature, 1 for a stale one with a temperature,
+/// 0 for one without a temperature.
+fn observation_rank(observation: &Observation) -> u8 {
+    match (observation.temperature.is_some(), observation.stale) {
+        (true, false) => 2,
+        (true, true) => 1,
+        (false, _) => 0,
     }
 }
 /// The error for a lookup refused by admission control or upstream pacing.
