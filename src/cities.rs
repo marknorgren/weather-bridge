@@ -87,12 +87,25 @@ pub struct Cities {
     /// GeoNames ID to position in `cities`.
     by_id: Arc<HashMap<u64, usize>>,
 }
+/// Normalize a name for matching, on both the index side and the query side.
+/// Folds accents and case, drops periods and apostrophes, turns hyphens into
+/// spaces, and maps whole-word `st`/`saint`, `ste`/`sainte`, `ft`/`fort` and
+/// `mt`/`mount` abbreviations to one form. No fuzzy matching.
 pub fn normalize(s: &str) -> String {
     s.nfkd()
         .filter(|c| !is_combining_mark(*c))
+        .filter(|c| !matches!(c, '.' | '\'' | '\u{2019}' | '\u{2018}' | '`'))
+        .map(|c| if c == '-' { ' ' } else { c })
         .collect::<String>()
         .to_lowercase()
         .split_whitespace()
+        .map(|word| match word {
+            "st" => "saint",
+            "ste" => "sainte",
+            "ft" => "fort",
+            "mt" => "mount",
+            other => other,
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -306,6 +319,47 @@ mod tests {
             c.cities.iter().all(|c| c.state.len() == 2),
             "state is a two-letter code"
         );
+    }
+    #[test]
+    fn st_and_saint_forms_match_the_same_candidates() {
+        let c = Cities::load().unwrap();
+        let ids = |q: &str| -> Vec<u64> {
+            let e = c.resolve(q).unwrap_err();
+            assert_eq!(e.code, ErrorCode::AmbiguousCity, "{q}");
+            let mut ids: Vec<u64> = e.choices.unwrap().iter().map(|c| c.id).collect();
+            ids.sort();
+            ids
+        };
+        // Missouri indexes "St. Louis" and Michigan indexes "Saint Louis".
+        let louis = ids("Saint Louis");
+        assert!(louis.len() >= 2);
+        for q in ["St Louis", "St. Louis", "SAINT  LOUIS"] {
+            assert_eq!(ids(q), louis, "{q}");
+        }
+        assert_eq!(c.resolve("St Louis, MO").unwrap().state, "MO");
+        assert_eq!(c.resolve("Saint Louis, MO").unwrap().state, "MO");
+        assert_eq!(c.resolve("Saint Louis, MI").unwrap().state, "MI");
+        // Index "Saint Paul" (MN) is found from abbreviated forms.
+        for q in ["St. Paul, MN", "St Paul, MN", "Saint Paul, MN"] {
+            assert_eq!(c.resolve(q).unwrap().state, "MN", "{q}");
+        }
+        // Index "St. Petersburg" is found from the spelled-out form.
+        assert_eq!(c.resolve("Saint Petersburg, FL").unwrap().state, "FL");
+        assert_eq!(c.resolve("Ste Genevieve, MO").unwrap().state, "MO");
+        assert_eq!(c.resolve("Ft Worth, TX").unwrap().state, "TX");
+        assert_eq!(c.resolve("Mt. Pleasant, SC").unwrap().state, "SC");
+        assert_eq!(c.resolve("Mount Gay Shamrock, WV").unwrap().state, "WV");
+    }
+    #[test]
+    fn normalize_ignores_punctuation_and_abbreviation_forms() {
+        assert_eq!(normalize("St. Mary's"), normalize("Saint Marys"));
+        assert_eq!(
+            normalize("Mount Gay-Shamrock"),
+            normalize("mt gay shamrock")
+        );
+        assert_eq!(normalize("Ft. Worth"), "fort worth");
+        // Only whole words are expanded.
+        assert_eq!(normalize("Stanton"), "stanton");
     }
     #[test]
     fn not_found_suggestions_stay_limited() {
