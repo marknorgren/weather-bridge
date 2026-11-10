@@ -118,6 +118,13 @@ pub struct Faults {
     pub observation_delay: Duration,
     /// /stations lists a third station, so a report can try three observations.
     pub three_stations: bool,
+    /// With `three_stations`, the second-nearest station MID answers a fresh observation
+    /// at 10 degrees C. Without it, MID has no observation (404).
+    pub mid_fresh_observation: bool,
+    /// With `three_stations`, MID answers a stale observation at 10 degrees C.
+    pub mid_stale_observation: bool,
+    /// The NEAR observation is timestamped this many seconds in the future.
+    pub near_observation_future_seconds: Option<i64>,
     /// Every /points grid lookup succeeds, and its links carry the point as a query, so
     /// each grid point needs its own uncached forecast, hourly and station documents.
     pub every_point_covered: bool,
@@ -255,13 +262,26 @@ fn document(
             if faults.observation_missing_timestamp_once && request_number == 1 {
                 json!({"properties":{"temperature":{"value":20,"unitCode":"wmoUnit:degC"}}})
             } else {
-                let timestamp = if faults.fresh_observation {
+                let timestamp = if let Some(seconds) = faults.near_observation_future_seconds {
+                    (chrono::Utc::now() + chrono::Duration::seconds(seconds))
+                        .to_rfc3339_opts(SecondsFormat::Secs, true)
+                } else if faults.fresh_observation {
                     chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
                 } else {
                     "2020-01-01T12:00:00Z".to_owned()
                 };
                 json!({"properties":{"timestamp":timestamp,"temperature":{"value":20,"unitCode":"wmoUnit:degC"},"windSpeed":{"value":36,"unitCode":"wmoUnit:km_h-1"},"textDescription":"Clear","relativeHumidity":{"value":55}}})
             }
+        }
+        "/stations/MID/observations/latest"
+            if faults.mid_fresh_observation || faults.mid_stale_observation =>
+        {
+            let timestamp = if faults.mid_fresh_observation {
+                chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+            } else {
+                "2020-01-01T13:00:00Z".to_owned()
+            };
+            json!({"properties":{"timestamp":timestamp,"temperature":{"value":10,"unitCode":"wmoUnit:degC"},"textDescription":"Rain"}})
         }
         _ => return (StatusCode::NOT_FOUND, Json(json!({"error":"not found"}))),
     };

@@ -12,6 +12,8 @@ use chrono::{DateTime, Utc};
 
 /// Observations older than this are marked stale.
 const STALE_AFTER_SECONDS: i64 = 2 * 60 * 60;
+/// An observation timestamped further ahead than this is not fresh (clock-skew tolerance).
+const FUTURE_TOLERANCE_SECONDS: i64 = 5 * 60;
 /// How many of the nearest stations are tried for an observation.
 const STATIONS_TRIED: usize = 3;
 
@@ -105,13 +107,17 @@ pub(super) fn observation(
 ) -> Option<Observation> {
     let o = &latest.properties;
     let observed_at = o.timestamp.clone()?;
-    let age = DateTime::parse_from_rfc3339(&observed_at)
+    let raw_age = DateTime::parse_from_rfc3339(&observed_at)
         .ok()
-        .map(|t| (Utc::now() - t.with_timezone(&Utc)).num_seconds().max(0));
+        .map(|t| (Utc::now() - t.with_timezone(&Utc)).num_seconds());
+    let age = raw_age.map(|age| age.max(0));
+    // A timestamp beyond the clock-skew tolerance cannot be trusted as current.
+    let stale =
+        raw_age.is_none_or(|age| !(-FUTURE_TOLERANCE_SECONDS..=STALE_AFTER_SECONDS).contains(&age));
     Some(Observation {
         observed_at,
         age_seconds: age,
-        stale: age.is_none_or(|age| age > STALE_AFTER_SECONDS),
+        stale,
         station: station.into(),
         station_distance_km: round(km),
         condition: o.text_description.clone(),
@@ -219,6 +225,21 @@ mod tests {
             "no unit code, no temperature"
         );
         assert_eq!(wire["stationDistanceKm"], 1.0);
+    }
+    #[test]
+    fn future_dated_observations_are_fresh_only_within_clock_skew() {
+        let at = |offset: i64| {
+            let t = (Utc::now() + chrono::Duration::seconds(offset))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let latest: LatestObservation = decode(&json!({"properties": {
+                "timestamp": t, "temperature": {"value": 20, "unitCode": "wmoUnit:degC"}}}));
+            observation(&latest, "KSEA", 1.0, Units::Us, String::new()).unwrap()
+        };
+        assert!(!at(-60).stale);
+        assert!(!at(60).stale, "small clock skew is tolerated");
+        let future = at(3600);
+        assert!(future.stale, "an hour ahead is not fresh");
+        assert!(at(3 * 3600).stale);
     }
     #[test]
     fn observed_quantities_keep_their_wire_unit_strings() {

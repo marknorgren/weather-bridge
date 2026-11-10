@@ -142,8 +142,11 @@ async fn version_and_metrics_are_operator_endpoints() {
 
 #[tokio::test]
 async fn metrics_report_cache_upstream_and_partial_behavior_with_fixed_labels() {
+    // A fresh nearest observation ends the station search, so only the alert outage
+    // counts as upstream status failures.
     let harness = fixture(Faults {
         alerts_fail: true,
+        fresh_observation: true,
         ..Default::default()
     })
     .await;
